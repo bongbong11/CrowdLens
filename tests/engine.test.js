@@ -10,7 +10,7 @@ const profiles = { character: profile, persona: { ...profile, name: 'Jamie', occ
 const config = () => ({ branch: 'main', provider: 'typesafe', apiKey: 'test-only', platforms: [DEFAULT_PLATFORMS[0]], profiles: {}, outputTokens: 8192 });
 const context = () => ({ characterId: 0, characters: [{ avatar: 'hunter.png', name: 'Hunter', description: '선수. 공개된 선수 경력. 비밀: 향수 수집.' }], chatId: 'chat1', name1: 'Jamie', powerUserSettings: { persona_description: '회사원' }, chat: [{ name: 'Jamie', is_user: true, mes: '경기 인터뷰를 볼까?' }, { name: 'Hunter', mes: '공개 인터뷰가 방송됐다.', swipe_id: 0 }] });
 const scores = () => ({ visible: .95, p0: .9, ...Object.fromEntries(Object.keys(GROUPS).map(g => [`p0_${g}`, g === 'public' ? .9 : .1])) });
-const modelFeed = () => JSON.stringify({ feeds: [{ platform: 'x', posts: Array.from({ length: 8 }, (_, i) => ({ author: `user${i}`, group: 'public', region: 'us', body: '인터뷰 봤다.' })) }] });
+const modelFeed = () => JSON.stringify({ feeds: [{ platform: 'twitch', posts: Array.from({ length: 8 }, (_, i) => ({ author: `user${i}`, group: 'public', region: 'us', body: '인터뷰 봤다.' })) }] });
 
 test('uploaded lorebook imports 9 platforms and shares archetypes without SMS or a fake archetype platform', { skip: !existsSync(new URL('../prompts/community-reactions.json', import.meta.url)) }, () => {
     const source = JSON.parse(readFileSync(new URL('../prompts/community-reactions.json', import.meta.url), 'utf8'));
@@ -24,6 +24,13 @@ test('uploaded lorebook imports 9 platforms and shares archetypes without SMS or
 test('imports reject duplicate IDs, missing prompts and empty data', () => {
     for (const bad of [[], { platforms: [{ id: 'a', name: 'A' }] }, [{ id: 'a', name: 'A', prompt: 'x' }, { id: 'a', name: 'B', prompt: 'y' }]]) assert.throws(() => importPlatforms(bad));
 });
+test('custom platforms from separate lorebooks do not collide at their first entry', () => {
+    const first = importPlatforms({ entries: { 0: { comment: 'Custom Alpha', content: 'Alpha instructions.' } } });
+    const second = importPlatforms({ entries: { 0: { comment: 'Custom Beta', content: 'Beta instructions.' } } });
+    assert.notEqual(first[0].id, second[0].id);
+    assert.equal(importPlatforms([...first, ...second]).length, 2);
+    assert.equal(importPlatforms({ entries: { 7: { comment: 'Custom Alpha', content: 'New instructions.' } } })[0].id, first[0].id);
+});
 test('private scenes never create public fandom or media plans', () => {
     assert.deepEqual(planFeed(DEFAULT_PLATFORMS, { visible: .1, p0: 1, p0_fans: 1 }), []);
     assert.deepEqual(planFeed([DEFAULT_PLATFORMS[0]], { visible: 1, p0: 1, p0_fans: .1, p0_media: .1 }), []);
@@ -35,14 +42,14 @@ test('weighted sampling uses only eligible groups and exact count', () => {
     assert.equal(Object.values(varied[0].slots).reduce((a, b) => a + b), 8);
 });
 test('manual selection excludes unchecked communities and skips only platform suitability', async () => {
-    const s = { ...config(), platforms: DEFAULT_PLATFORMS, selectionMode: 'manual', selectedPlatforms: ['x'] };
-    assert.deepEqual(selectedPlatforms(s).map(p => p.id), ['x']);
+    const s = { ...config(), platforms: DEFAULT_PLATFORMS, selectionMode: 'manual', selectedPlatforms: ['twitch'] };
+    assert.deepEqual(selectedPlatforms(s).map(p => p.id), ['twitch']);
     const q = sceneQuestions(selectedPlatforms(s), true);
     assert.equal(q.p0, undefined); assert.ok(q.visible); assert.ok(q.p0_public); assert.equal(q.p1_public, undefined);
     const manualScores = { ...scores(), p0: 0 };
     const result = await runScene({ snapshot: capture(context(), s, 1), settings: s, valid: () => true, save() {}, random: () => .5,
         generate: async options => options.systemPrompt.startsWith('Summarize') ? JSON.stringify(profiles) : modelFeed(), classify: async () => manualScores });
-    assert.deepEqual(result.feeds.map(f => f.id), ['x']);
+    assert.deepEqual(result.feeds.map(f => f.id), ['twitch']);
     assert.deepEqual(planFeed(selectedPlatforms(s), { ...manualScores, visible: 0 }, 8, Math.random, true), []);
     await assert.rejects(runScene({ settings: { ...s, selectedPlatforms: [] } }), /하나 이상/);
     assert.notEqual(capture(context(), s, 1).key, capture(context(), { ...s, selectedPlatforms: ['reddit'] }, 1).key);

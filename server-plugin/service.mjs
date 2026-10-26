@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { runScene, decide } from './runtime/engine.js';
-import { DEFAULT_PLATFORMS, PROVIDERS, importPlatforms, fingerprint } from './runtime/core.js';
+import { DEFAULT_PLATFORMS, PROVIDERS, importPlatforms, fingerprint, upgradeCatalog } from './runtime/core.js';
 import { rootFor, read, write, serial, scopeOf, profileFile, chatFile, jobFile, digest } from './storage.mjs';
 
-export const defaultConfig = () => ({ version: 2, enabled: false, automatic: false, branch: 'main', branches: ['main'], selectionMode: 'auto', selectedPlatforms: DEFAULT_PLATFORMS.map(p => p.id), provider: 'typesafe', profileId: '', outputTokens: 8192, platforms: structuredClone(DEFAULT_PLATFORMS) });
+export const defaultConfig = () => ({ version: 2, catalogVersion: 1, enabled: false, automatic: false, branch: 'main', branches: ['main'], selectionMode: 'auto', selectedPlatforms: DEFAULT_PLATFORMS.map(p => p.id), provider: 'typesafe', profileId: '', outputTokens: 8192, platforms: structuredClone(DEFAULT_PLATFORMS) });
 const record = value => value && typeof value === 'object' && !Array.isArray(value);
 function cleanConfig(raw) {
     const base = defaultConfig();
@@ -68,7 +68,13 @@ export function createService({ generateFactory, fetchImpl = fetch, timeoutMs = 
                         saved.results[key] ??= value; await write(root, file, saved);
                     }
                 }
-                state = { schema: 1, revision: 1, settings: cleanConfig(legacy), migratedLegacy: record(legacy), skippedLegacy, legacyHash: record(legacy) ? digest(JSON.stringify(legacy)) : '' };
+                state = { schema: 1, revision: 1, settings: cleanConfig(upgradeCatalog(legacy, legacy)), migratedLegacy: record(legacy), skippedLegacy, legacyHash: record(legacy) ? digest(JSON.stringify(legacy)) : '' };
+                await write(root, 'settings.json', state);
+            }
+            const catalog = upgradeCatalog(state.settings, legacy);
+            if (JSON.stringify(catalog) !== JSON.stringify(state.settings)) {
+                if (!await read(root, 'migration/catalog-v1-backup.json')) await write(root, 'migration/catalog-v1-backup.json', state.settings);
+                state = { ...state, revision: state.revision + 1, settings: cleanConfig(catalog) };
                 await write(root, 'settings.json', state);
             }
             const secrets = await read(root, 'secrets.json', {});

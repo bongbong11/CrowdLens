@@ -8,6 +8,7 @@ import { createService } from '../server-plugin/service.mjs';
 import { rootFor, read, write, profileFile, chatFile, jobFile } from '../server-plugin/storage.mjs';
 import { selectConnection, invokeChatRouter, makeGenerator } from '../server-plugin/model-bridge.mjs';
 import { capture } from '../src/engine.js';
+import { DEFAULT_PLATFORMS, LEGACY_DEFAULT_PLATFORMS } from '../src/core.js';
 
 const person = { name: 'Hunter', occupation: '선수', recognition: '공인', reputation: '차분함', acquaintanceView: '친근함', publicInfo: '선수 경력' };
 const modelProfile = JSON.stringify({ character: person, persona: { ...person, name: 'Jamie', occupation: '회사원' } });
@@ -90,6 +91,34 @@ test('branches, manual checks and edited prompts persist; old automatic generati
     assert.deepEqual(restored.settings.selectedPlatforms, [f.config.platforms[0].id]);
     assert.equal(restored.settings.platforms[0].prompt, 'Edited platform voice.');
     assert.equal(restored.settings.platforms[0].sharedPrompt, 'Edited shared instruction.');
+});
+test('old four-platform storage upgrades once to nine and adopts a private bundle without losing edits', async t => {
+    const f = await fixture(t);
+    const stored = await read(f.root, 'settings.json');
+    const legacy = { ...f.config, platforms: structuredClone(LEGACY_DEFAULT_PLATFORMS), selectedPlatforms: ['x', 'reddit'], selectionMode: 'manual' };
+    delete legacy.catalogVersion;
+    legacy.platforms.find(p => p.id === 'reddit').prompt = 'My edited Reddit prompt.';
+    await write(f.root, 'settings.json', { ...stored, settings: legacy });
+    const first = await f.service.bootstrap(f.request, { platforms: DEFAULT_PLATFORMS });
+    assert.equal(first.settings.platforms.length, 9);
+    assert.equal(first.settings.platforms.find(p => p.id === 'reddit').prompt, 'My edited Reddit prompt.');
+    assert.deepEqual(first.settings.selectedPlatforms, ['reddit', 'twitter']);
+    assert.equal(first.keyStatuses.typesafe, true);
+    assert.equal((await read(f.root, 'migration/catalog-v1-backup.json')).platforms.length, 4);
+    assert.equal((await f.service.bootstrap(f.request, { platforms: DEFAULT_PLATFORMS })).revision, first.revision);
+    const bundle = { platforms: DEFAULT_PLATFORMS.map(p => ({ ...p, prompt: 'Private source fixture: ' + p.id })), promptSource: 'local-book.json' };
+    const adopted = await f.service.bootstrap(f.request, bundle);
+    assert.equal(adopted.settings.promptSource, 'local-book.json');
+    assert.equal(adopted.settings.platforms.find(p => p.id === 'twitter').prompt, 'Private source fixture: twitter');
+    assert.equal(adopted.settings.platforms.find(p => p.id === 'reddit').prompt, 'My edited Reddit prompt.');
+    assert.equal((await f.service.bootstrap(f.request, bundle)).revision, adopted.revision);
+});
+test('an explicitly imported smaller lorebook is never replaced by default catalog repair', async t => {
+    const f = await fixture(t);
+    await f.service.updateSettings(f.request, { revision: f.revision, settings: { ...f.config, platforms: LEGACY_DEFAULT_PLATFORMS, promptSource: 'chosen-four.json' } });
+    const data = await f.service.bootstrap(f.request, { platforms: DEFAULT_PLATFORMS, promptSource: 'another-book.json' });
+    assert.equal(data.settings.platforms.length, 4);
+    assert.equal(data.settings.promptSource, 'chosen-four.json');
 });
 test('server completes a detached job without polling and results survive a new client/service', async t => {
     let release;

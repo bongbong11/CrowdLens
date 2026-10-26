@@ -68,7 +68,9 @@ export async function showSettings({ context, state: s, server, status, keyStatu
     for (const [id, label] of [['auto', '자동 선택'], ['manual', '직접 체크']]) {
         const button = action(label, () => { s.selectionMode = id; updateChoices(); void changed(); }); modeButtons.push([id, button]); modes.append(button);
     }
-    communities.append(modes, choices, selectionHint); updateChoices();
+    const sourceNotice = node('p', '', 'cl-hint');
+    const updateSource = () => sourceNotice.textContent = `${s.platforms.length}개 커뮤니티 · ${s.promptSource || '기본 안내 프롬프트 (원문 로어북은 아직 가져오지 않았어요)'}`;
+    communities.append(modes, choices, selectionHint, sourceNotice, row(action('로어북 가져오기', () => file.click()))); updateChoices(); updateSource();
 
     const branchBody = section(scroll, '프로필 브랜치', '다른 설정의 사회적 프로필을 쓰고 싶을 때 추가하세요.');
     const branch = node('select'); branch.setAttribute('aria-label', '브랜치');
@@ -139,16 +141,18 @@ export async function showSettings({ context, state: s, server, status, keyStatu
         platform.prompt = prompt.value.trim(); platform.sharedPrompt = shared.value.trim(); platform.moderation = underground.checked ? 'unmoderated' : 'normal'; keepDraft();
         await changed(); editStatus.textContent = server.failure ? server.failure.message : `${platform.name} 프롬프트를 저장했어요. 다음 생성부터 적용됩니다.`;
     }, true), action('편집 되돌리기', () => { draftsById.delete(editingId); loadDraft(); })), editStatus);
-    const importBody = section(editor, 'JSON 파일 가져오기', '가져오면 현재 커뮤니티 목록과 프롬프트를 교체합니다. SMS는 제외됩니다.', true);
-    const file = node('input'); file.type = 'file'; file.accept = '.json,application/json'; field(importBody, '프롬프트 파일', file);
+    const importBody = section(editor, 'JSON 파일 가져오기', '여러 파일을 함께 선택할 수 있어요. 기존 목록에 합치며, 같은 플랫폼 ID는 새 파일 내용으로 갱신합니다. SMS는 제외됩니다.', true);
+    const file = node('input'); file.type = 'file'; file.multiple = true; file.accept = '.json,application/json'; field(importBody, '프롬프트 파일', file);
     const importedNotice = node('p', `${s.platforms.length}개 커뮤니티 · ${s.promptSource || '기본 예시 프롬프트'}`, 'cl-hint'); importBody.append(importedNotice);
     file.addEventListener('change', async () => {
         try {
-            const selected = file.files[0]; if (!selected) return;
-            if (selected.size > 1024 * 1024) throw new Error('1MB 이하 JSON 파일을 선택해 주세요.');
-            const imported = importPlatforms(JSON.parse(await selected.text()));
-            s.platforms = imported; s.promptSource = selected.name; s.selectedPlatforms = imported.map(p => p.id); draftsById.clear(); populateEditor(); updateChoices();
-            await changed(); importedNotice.textContent = `${imported.length}개 커뮤니티를 가져왔어요. ${server.failure ? server.failure.message : ''}`;
+            const files = [...file.files]; if (!files.length) return;
+            if (files.reduce((sum, selected) => sum + selected.size, 0) > 1024 * 1024) throw new Error('합계 1MB 이하 JSON 파일을 선택해 주세요.');
+            const combined = new Map(s.platforms.map(p => [p.id, p]));
+            for (const selected of files) for (const platform of importPlatforms(JSON.parse(await selected.text()))) combined.set(platform.id, platform);
+            const imported = importPlatforms([...combined.values()]);
+            s.platforms = imported; s.catalogVersion = 1; s.promptSource = files.map(f => f.name).join(', '); s.selectedPlatforms = imported.map(p => p.id); draftsById.clear(); populateEditor(); updateChoices(); updateSource();
+            await changed(); importedNotice.textContent = `${files.length}개 파일을 합쳐 ${imported.length}개 커뮤니티를 저장했어요. ${server.failure ? server.failure.message : ''}`;
         } catch (error) { importedNotice.textContent = error.message; }
     });
 

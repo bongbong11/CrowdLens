@@ -11,7 +11,7 @@ export class ServerClient {
     }
     async initialize(legacy) {
         const data = await this.request('bootstrap', { legacy });
-        if (data.protocol !== 3) throw new Error('CrowdLens 서버 플러그인을 최신 버전으로 업데이트해 주세요.');
+        if (data.protocol !== 3 || data.settings?.catalogVersion !== 1) throw new Error('CrowdLens 서버 플러그인을 0.3.1 이상으로 업데이트하고 SillyTavern 서버를 재시작해 주세요.');
         this.revision = data.revision; this.ready = true; this.failure = null; return data;
     }
     save(settings) {

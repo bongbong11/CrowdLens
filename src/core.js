@@ -10,12 +10,47 @@ export const GROUPS = {
     public: 'ordinary users who have encountered the publicly available information',
     critics: 'critical users with plausible access to this information',
 };
-export const DEFAULT_PLATFORMS = [
+export const LEGACY_DEFAULT_PLATFORMS = [
     { id: 'x', name: 'X', style: 'microblog', prompt: 'Short posts, quote reactions, and varied voices. Use hashtags only when appropriate.' },
     { id: 'instagram', name: 'Instagram', style: 'photo', prompt: 'Short comments on photos or public posts. Vary familiarity according to the relationship.' },
     { id: 'reddit', name: 'Reddit', style: 'forum', prompt: 'Topic-based community post titles and comments. Mix opinions, counterarguments, and conversational replies.' },
     { id: 'community', name: '커뮤니티', style: 'board', prompt: 'Anonymous board titles and comments. Include niche perspectives and disagreements rather than unanimous opinions.' },
 ];
+// Original built-in descriptions; the user's uploaded lorebook stays private.
+export const DEFAULT_PLATFORMS = [
+    { id: 'twitch', name: 'Twitch Chat', style: 'live', prompt: 'Write a fast livestream chat reacting to the current visible moment. Mix short messages, interruptions, recognizable emotes and individual personalities; avoid long essays.' },
+    { id: 'reddit', name: 'Reddit', style: 'forum', prompt: 'Write a topic-specific forum thread with a concise title and conversational replies. Include different viewpoints, tangents and individual levels of investment.' },
+    { id: 'twitter', name: 'X / Twitter', style: 'microblog', prompt: 'Write brief public posts, quote-post remarks and reply chains. Mix sincere reactions with jokes, criticism and context-specific memes.' },
+    { id: 'discord', name: 'Discord', style: 'chat', prompt: 'Write a casual channel conversation among users who plausibly share this information. Use varied message lengths, familiar banter and replies.' },
+    { id: 'youtube', name: 'YouTube', style: 'video', prompt: 'Write comments beneath a relevant public video. Mix reactions to particular moments, short jokes, observations and argumentative reply chains.' },
+    { id: 'ao3', name: 'AO3', style: 'archive', prompt: 'Write archive-style reader comments about a relevant fanwork or fandom discussion only when the scene supports it. Include distinct reader voices and interpretations.' },
+    { id: 'instagram', name: 'Instagram', style: 'photo', prompt: 'Write comments beneath a relevant public photo or short post. Vary familiarity, attention, humor and tone according to each commenter and relationship.' },
+    { id: 'tiktok', name: 'TikTok', style: 'shortvideo', prompt: 'Write quick comments beneath a relevant public short video. Mix specific visual observations, local meme habits, informal jokes and conversational replies.' },
+    { id: '4chan', name: '4chan / Anon', style: 'anon', moderation: 'unmoderated', prompt: 'Write an anonymous imageboard thread with numbered replies, occasional greentext and chaotic individual voices. Include crude shitposting, harsh mockery and petty arguments where appropriate. This fictional space has no moderator deletion notices.' },
+];
+
+export function upgradeCatalog(raw = {}, offered = {}) {
+    const saved = raw && typeof raw === 'object' ? raw : {};
+    const supplied = Array.isArray(offered?.platforms) ? importPlatforms(offered.platforms) : null;
+    const fullBundle = supplied && offered.promptSource && DEFAULT_PLATFORMS.every(p => supplied.some(q => q.id === p.id));
+    const old = Array.isArray(saved.platforms) ? saved.platforms : [];
+    const legacyFour = old.length === 4 && LEGACY_DEFAULT_PLATFORMS.every(p => old.some(q => q.id === p.id));
+    const adoptBundle = fullBundle && !saved.promptSource && old.every(p => [...DEFAULT_PLATFORMS, ...LEGACY_DEFAULT_PLATFORMS].some(q => q.id === p.id));
+    if (saved.promptSource || (!legacyFour && !adoptBundle)) return { ...saved, catalogVersion: 1 };
+    const platforms = structuredClone(fullBundle ? supplied : DEFAULT_PLATFORMS);
+    for (const platform of old) {
+        const builtin = (legacyFour ? LEGACY_DEFAULT_PLATFORMS : DEFAULT_PLATFORMS).find(p => p.id === platform.id);
+        const customized = !builtin || ['name', 'style', 'prompt'].some(key => platform[key] !== builtin[key]) || Boolean(platform.sharedPrompt) || (platform.moderation === 'unmoderated' && builtin.moderation !== 'unmoderated');
+        if (!customized) continue;
+        const id = platform.id === 'x' ? 'twitter' : platform.id;
+        const replacement = { ...platform, id }, index = platforms.findIndex(p => p.id === id);
+        if (index < 0) platforms.push(replacement); else platforms[index] = replacement;
+    }
+    const selectedPlatforms = saved.selectionMode === 'manual' && Array.isArray(saved.selectedPlatforms)
+        ? saved.selectedPlatforms.map(id => id === 'x' ? 'twitter' : id).filter(id => platforms.some(p => p.id === id))
+        : platforms.map(p => p.id);
+    return { ...saved, catalogVersion: 1, platforms, selectedPlatforms, ...(fullBundle ? { promptSource: offered.promptSource } : {}) };
+}
 const text = (v, max = 600) => typeof v === 'string' ? v.trim().slice(0, max) : '';
 const isSms = p => /^(sms|text[-_ ]?messages?)$/i.test(String(p?.id || '')) || /\bsms\b|문자|text messaging/i.test(String(p?.name || ''));
 export function parseJSON(raw) {
@@ -40,15 +75,15 @@ export function importPlatforms(raw) {
         rows = entries.filter(e => !e.constant && !/공통|archetypes/i.test(e.comment || '')).map((e, i) => {
             const name = e.comment || e.key?.[0];
             const match = [['twitch', 'live'], ['reddit', 'forum'], ['twitter', 'microblog'], ['discord', 'chat'], ['youtube', 'video'], ['ao3', 'archive'], ['instagram', 'photo'], ['tiktok', 'shortvideo'], ['4chan', 'anon']].find(([word]) => name?.toLowerCase().includes(word));
-            return { id: match?.[0] || `import-${i}`, name: name?.replace(/ Format$/, ''), prompt: e.content, sharedPrompt: common, style: match?.[1] || 'board' };
+            return { id: match?.[0] || `import-${fingerprint(name || i)}`, name: name?.replace(/ Format$/, ''), prompt: e.content, sharedPrompt: common, style: match?.[1] || 'board' };
         });
     }
-    if (!Array.isArray(rows) && rows && typeof rows === 'object') rows = Object.entries(rows).map(([name, prompt], i) => ({ id: `import-${i}`, name, prompt }));
+    if (!Array.isArray(rows) && rows && typeof rows === 'object') rows = Object.entries(rows).map(([name, prompt]) => ({ id: `import-${fingerprint(name)}`, name, prompt }));
     if (Array.isArray(rows)) rows = rows.filter(p => !isSms(p));
     if (!Array.isArray(rows) || !rows.length || rows.length > 24) throw new Error('SMS를 제외한 플랫폼은 1~24개여야 합니다. platforms 배열 또는 로어북 entries를 확인해 주세요.');
     const ids = new Set();
     return rows.map((p, i) => {
-        const id = /^[a-z0-9_-]{1,40}$/i.test(p.id) ? p.id : `platform-${i}`;
+        const id = /^[a-z0-9_-]{1,40}$/i.test(p.id) ? p.id : `platform-${fingerprint(p.name || i)}`;
         if (ids.has(id)) throw new Error('플랫폼 ID가 중복됩니다.');
         ids.add(id);
         const row = { id, name: text(p.name, 80), prompt: text(p.prompt, 20000), sharedPrompt: text(p.sharedPrompt, 12000), style: ['microblog', 'photo', 'forum', 'board', 'live', 'chat', 'video', 'archive', 'shortvideo', 'anon'].includes(p.style) ? p.style : 'board' };
