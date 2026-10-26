@@ -1,0 +1,55 @@
+.crowdlens { margin: 12px 0 4px; border: 1px solid #52617a66; border-radius: 12px; overflow: hidden; font-size: .92em; }
+.crowdlens summary { cursor: pointer; padding: 10px 14px; background: #7585a014; font-weight: 600; }
+.cl-content { padding: 12px; }
+.cl-status { opacity: .75; font-size: .87em; white-space: pre-wrap; }
+.cl-tabs { display: flex; gap: 6px; overflow-x: auto; padding: 8px 0; }
+.cl-tabs button { white-space: nowrap; border-radius: 20px; }
+.cl-tabs [aria-selected=true] { background: #4269b0; color: white; }
+.cl-feed { color: #202632; background: #fff; border-radius: 10px; overflow: hidden; text-align: left; }
+.cl-platform { font-size: 1.1em; font-weight: 800; padding: 14px; border-bottom: 1px solid #e2e6ed; }
+.cl-post { padding: 14px; border-bottom: 1px solid #e2e6ed; }
+.cl-post-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cl-post-head small { color: #6b7480; font-size: .75em; }
+.cl-avatar { display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: #e4eaf6; font-weight: 700; }
+.cl-post p { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.55; margin: 8px 0; }
+.cl-post h4 { color: inherit; margin: 8px 0; }
+.cl-meta { color: #707986; font-size: .8em; pointer-events: none; }
+.cl-microblog { background: #101319; color: #edf0f5; }
+.cl-microblog .cl-post, .cl-microblog .cl-platform { border-color: #303640; }
+.cl-microblog .cl-avatar { background: #27344c; }
+.cl-photo .cl-platform { background: linear-gradient(110deg,#fff3e7,#f9e9fa); color: #562b59; }
+.cl-photo .cl-avatar { background: #f7e1eb; outline: 2px solid #df729f; outline-offset: 2px; }
+.cl-forum { background: #f2f5f8; }
+.cl-forum .cl-post { background: white; margin: 8px; border-radius: 8px; border-left: 3px solid #ff6735; }
+.cl-board .cl-platform { background: #314d85; color: white; }
+.cl-board .cl-avatar { display: none; }
+.cl-live { background: #19151f; color: #eee6fa; }
+.cl-live .cl-platform { color: #c99aff; border-color: #44334f; }
+.cl-live .cl-post { padding: 7px 12px; border: 0; }
+.cl-live .cl-post-head { display: inline-flex; margin-right: 7px; color: #c99aff; }
+.cl-live .cl-avatar, .cl-live .cl-meta, .cl-live small { display: none; }
+.cl-live .cl-post p { display: inline; }
+.cl-chat { background: #30333d; color: #e3e6f0; }
+.cl-chat .cl-platform { background: #262934; }
+.cl-chat .cl-post { border-color: #414652; }
+.cl-chat .cl-avatar { background: #5865f2; color: white; }
+.cl-video .cl-platform { border-left: 5px solid #e83232; }
+.cl-shortvideo { background: #131316; color: #f2f4f6; }
+.cl-shortvideo .cl-platform { text-shadow: 2px 0 #d52e72,-2px 0 #40c1c9; }
+.cl-shortvideo .cl-post { border-color: #34343a; }
+.cl-archive { background: #fffdfa; }
+.cl-archive .cl-platform { background: #8d1010; color: white; font-family: Georgia,serif; }
+.cl-sms { background: #f3f4f6; }
+.cl-sms .cl-post { margin: 8px 12px; border: 0; border-radius: 14px; background: #dcf2dc; }
+.cl-sms .cl-post:nth-child(odd) { background: #e5e7ee; margin-right: 28px; }
+.cl-sms .cl-avatar { display: none; }
+.cl-anon { background: #f1efdd; color: #343329; font-family: monospace; }
+.cl-anon .cl-platform { color: #8a1c1c; }
+.cl-anon .cl-post { background: #e5dfcc; margin: 8px; border: 1px solid #c2bda8; }
+.cl-anon .cl-post-head { color: #1c6a3b; }
+.cl-anon .cl-avatar { display: none; }
+.cl-settings { text-align: left; max-width: 800px; }
+.cl-field { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 12px 0; }
+.cl-field input:not([type=checkbox]) { width: 50%; padding: 6px; }
+.cl-profile { max-height: 340px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; background: #7585a014; padding: 12px; }
+@media(max-width:600px) { .cl-content,.cl-post { padding: 9px; } .cl-field { flex-wrap: wrap; } .cl-field input:not([type=checkbox]) { width: 100%; } }

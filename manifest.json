@@ -1,0 +1,12 @@
+{
+  "display_name": "CrowdLens",
+  "loading_order": 100,
+  "requires": [],
+  "optional": [],
+  "js": "index.js",
+  "css": "style.css",
+  "author": "bongbong11",
+  "version": "0.1.0",
+  "homePage": "https://github.com/bongbong11/CrowdLens",
+  "minimum_client_version": "1.18.0"
+}

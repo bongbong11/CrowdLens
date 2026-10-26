@@ -1,0 +1,3 @@
+# User-supplied source prompts remain local until publication is explicitly approved.
+prompts/community-reactions.json
+node_modules/

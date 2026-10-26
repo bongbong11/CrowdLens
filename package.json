@@ -1,0 +1,1 @@
+{"name":"crowdlens","version":"0.1.0","type":"module","private":true,"scripts":{"test":"node --test","check":"node --check index.js && node --check src/core.js && node --check src/engine.js && node --check src/sheets.js && node --check src/model.js"}}
