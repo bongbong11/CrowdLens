@@ -38,6 +38,16 @@ export async function read(root, relative, fallback = null) {
     try { return JSON.parse(await fs.readFile(file, 'utf8')); }
     catch (error) { if (error.code === 'ENOENT') return structuredClone(fallback); throw new Error('CrowdLens 저장 파일을 읽지 못했습니다. 원본을 보존했습니다.'); }
 }
+export async function replaceFile(temp, file, rename = fs.rename, delay = ms => new Promise(resolve => setTimeout(resolve, ms))) {
+    for (let attempt = 0; ; attempt++) {
+        try { await rename(temp, file); return; }
+        catch (error) {
+            if (attempt >= 5 || !['EPERM', 'EBUSY', 'EACCES'].includes(error.code)) throw error;
+            // Windows readers/virus scanners can briefly hold the destination open.
+            await delay(10 * 2 ** attempt);
+        }
+    }
+}
 export async function write(root, relative, data) {
     const file = await safeFile(root, relative);
     const temp = `${file}.${randomUUID()}.tmp`;
@@ -45,7 +55,7 @@ export async function write(root, relative, data) {
     try {
         handle = await fs.open(temp, 'wx', 0o600);
         await handle.writeFile(JSON.stringify(data)); await handle.sync(); await handle.close(); handle = null;
-        await fs.rename(temp, file);
+        await replaceFile(temp, file);
     } finally { await handle?.close(); await fs.unlink(temp).catch(error => { if (error.code !== 'ENOENT') throw error; }); }
 }
 export function scopeOf(raw) {

@@ -1,6 +1,6 @@
 import { ensureProfile } from './profile.js';
 import { REACTION_PROMPT } from './prompts.js';
-import { PROVIDERS, GROUPS, parseJSON, sceneQuestions, readDecisions, planFeed, manualPlans, postsOf, selectedPlatforms } from './core.js';
+import { PROVIDERS, GROUPS, parseJSON, sceneQuestions, readDecisions, planFeed, manualPlans, postsOf, selectedPlatforms, decisionSummary } from './core.js';
 export { capture } from './snapshot.js';
 
 export async function decide(settings, state, signal, headers, transport = fetch) {
@@ -60,6 +60,14 @@ export async function runScene({ snapshot, settings, generate, classify, valid, 
     else {
         const scores = await classify({ profiles: record.profile, scene: snapshot.history.at(-1), history: snapshot.history.slice(0, -1) });
         guard(); plans = planFeed(platforms, scores, count, random);
+        if (!plans.length) {
+            const reason = {
+                visibility: '현재 장면의 공개·목격·공유 경로가 확인되지 않았습니다.',
+                platforms: '현재 장면에 맞는 커뮤니티가 선택되지 않았습니다.',
+                groups: '선택된 커뮤니티에서 정보를 알 수 있는 반응 집단이 확인되지 않았습니다.',
+            }[decisionSummary(platforms, scores).rejection];
+            return { feeds: [], reason: `JEV 판독 완료: ${reason} 반응 작성 모델은 호출하지 않았습니다.` };
+        }
     }
     if (!plans.length) return { feeds: [], reason: '이 장면에서 자연스럽게 반응할 공개 경로나 집단이 없습니다.' };
     const result = await generate({

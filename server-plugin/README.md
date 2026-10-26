@@ -1,8 +1,8 @@
-# CrowdLens Server 0.2.0
+# CrowdLens Server 0.4.1
 
-이 폴더는 SillyTavern의 `plugins/crowdlens/`에 설치합니다. `package.json`, `index.mjs`, `service.mjs`, `storage.mjs`, `model-bridge.mjs`, `runtime/`이 같은 폴더 안에 있어야 합니다. 별도 npm 설치는 필요 없습니다.
+이 폴더는 SillyTavern의 `plugins/crowdlens/`에 설치합니다. `package.json`, `index.mjs`, `service.mjs`, `storage.mjs`, `model-bridge.mjs`, `jev-bridge.mjs`, `runtime/`이 같은 폴더 안에 있어야 합니다. 별도 npm 설치는 필요 없습니다.
 
-`config.yaml`에서 `enableServerPlugins: true`를 설정하고 SillyTavern을 재시작하세요. 화면용 CrowdLens 확장도 0.2.0 이상으로 업데이트해야 합니다. 기본 실행 위치는 SillyTavern 루트입니다. `enableCorsProxy`는 필요 없습니다.
+`config.yaml`에서 `enableServerPlugins: true`를 설정하고 SillyTavern을 재시작하세요. 화면용 CrowdLens 확장도 0.4.1 이상으로 업데이트해야 합니다. 기본 실행 위치는 SillyTavern 루트입니다. `enableCorsProxy`는 필요 없습니다.
 
 설정·JEV 키·사회적 프로필·피드는 계정별 `data/<account>/crowdlens/`에 저장됩니다. 키는 브라우저로 다시 내려보내지 않습니다. 파일은 비공개 계정 데이터이며 암호화 파일은 아닙니다.
 

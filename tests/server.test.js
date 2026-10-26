@@ -55,6 +55,30 @@ async function finish(service, request, id) {
     }
     throw new Error('Test job did not finish');
 }
+
+for (const gate of ['visibility', 'platforms', 'groups']) test(`auto ${gate} rejection calls JEV once, reports the gate, skips reaction and reopening is free`, async t => {
+    let requests = 0, modelCalls = 0;
+    const logs = [];
+    const f = await fixture(t, { logJev: (event, data) => logs.push({ event, data }),
+        generateFactory: async () => async options => { modelCalls++; assert.ok(options.systemPrompt.startsWith('Summarize')); return modelProfile; },
+        fetchImpl: async (_url, options) => {
+            requests++;
+            const questions = JSON.parse(options.body).questions;
+            const answers = Object.fromEntries(Object.keys(questions).map(key => [key, { noul: key === 'visible' ? (gate === 'visibility' ? .1 : .95) : /^p\d+$/.test(key) ? (gate === 'platforms' ? .1 : .95) : gate === 'groups' ? .1 : .95 }]));
+            return { ok: true, status: 200, json: async () => ({ answers }) };
+        } });
+    const submitted = await f.service.submit(f.request, { scope: f.snapshot.scope, snapshot: f.snapshot, revision: f.revision });
+    const job = await finish(f.service, f.request, submitted.job.id);
+    assert.equal(job.status, 'completed', job.error);
+    assert.equal(requests, 1); assert.equal(modelCalls, 1);
+    const saved = await f.service.scopeData(f.request, f.snapshot.scope);
+    assert.equal(saved.results[f.snapshot.key].result.feeds.length, 0);
+    assert.match(saved.results[f.snapshot.key].result.reason, /JEV 판독 완료/);
+    assert.equal(logs.at(-1).data.rejection, gate);
+    assert.deepEqual(logs.map(l => l.event), ['request_started', 'response_received', 'decision_complete']);
+    await f.service.scopeData(f.request, f.snapshot.scope);
+    assert.equal(requests, 1); assert.equal(modelCalls, 1);
+});
 test('server keeps config, keys, profiles and chat data in separate per-user files; keys never returned', async t => {
     const f = await fixture(t);
     const data = await f.service.bootstrap(f.request);

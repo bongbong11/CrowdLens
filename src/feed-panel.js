@@ -20,7 +20,7 @@ export function createFeedPanel(root, { state: s, isBusy, onGenerate, onTranslat
         const remove = button('선택 반응 삭제', async () => { try { await onDelete(selectedKey); } catch (error) { setStatus(error.message); } }); remove.disabled = isBusy();
         const tools = el('div', undefined, 'cl-actions cl-feed-history'); tools.append(history, remove); root.append(tools);
         const result = s.results[selectedKey]?.result;
-        if (result.reason) root.append(el('p', result.reason, 'cl-status'));
+        if (result.reason) root.append(el('p', `저장된 결과: ${result.reason}`, 'cl-status'));
         const feeds = result.feeds || [];
         if (!feeds.length) return;
         const feed = feeds.find(f => f.id === platformId) || feeds[0]; platformId = feed.id;

@@ -124,11 +124,18 @@ function voiceCast(platform, count, random) {
     }
     return cast;
 }
+export const DECISION_LIMITS = { visible: 0.65, platform: 0.55, group: 0.55 };
+export function decisionSummary(platforms, scores) {
+    const matched = platforms.map((_, i) => i).filter(i => scores[`p${i}`] >= DECISION_LIMITS.platform);
+    const eligible = matched.filter(i => Object.keys(GROUPS).some(g => scores[`p${i}_${g}`] >= DECISION_LIMITS.group));
+    const rejection = !(scores.visible >= DECISION_LIMITS.visible) ? 'visibility' : !matched.length ? 'platforms' : !eligible.length ? 'groups' : null;
+    return { visibleScore: scores.visible, platformCount: platforms.length, matchedPlatformCount: matched.length, eligiblePlatformCount: eligible.length, rejection };
+}
 export function planFeed(platforms, scores, count = 8, random = Math.random, manual = false) {
-    if (!(scores.visible >= 0.65)) return [];
+    if (!(scores.visible >= DECISION_LIMITS.visible)) return [];
     return platforms.flatMap((platform, i) => {
-        if (!manual && !(scores[`p${i}`] >= 0.55)) return [];
-        const candidates = Object.keys(GROUPS).filter(g => scores[`p${i}_${g}`] >= 0.55);
+        if (!manual && !(scores[`p${i}`] >= DECISION_LIMITS.platform)) return [];
+        const candidates = Object.keys(GROUPS).filter(g => scores[`p${i}_${g}`] >= DECISION_LIMITS.group);
         const weights = candidates.map(group => ({ group, weight: scores[`p${i}_${group}`] ** 2 * (0.4 + random()) }));
         if (!weights.length) return [];
         const slots = {};

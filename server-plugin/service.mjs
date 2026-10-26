@@ -2,7 +2,8 @@ import { createProfileService, saveProfile } from './profile-service.mjs';
 import { validateProfileSnapshot } from './source-contract.mjs';
 import { normalizeSelection } from './runtime/source-selection.js';
 import { randomUUID } from 'node:crypto';
-import { runScene, decide } from './runtime/engine.js';
+import { runScene } from './runtime/engine.js';
+import { createJevClassifier } from './jev-bridge.mjs';
 import { PROVIDERS, importPlatforms, fingerprint } from './runtime/core.js';
 import { rootFor, read, write, serial, scopeOf, profileFile, chatFile, jobFile, digest } from './storage.mjs';
 import { loadOriginalCatalog } from './original-catalog.mjs';
@@ -45,7 +46,7 @@ function snapshotOf(raw, scope) {
 const keyStatuses = secrets => Object.fromEntries(Object.keys(PROVIDERS).map(provider => [provider, Boolean(secrets[provider])]));
 const publicJob = job => job ? { id: job.id, key: job.key, kind: job.kind || 'generation', platform: job.platform, status: job.status, phase: job.phase, error: job.error || '', createdAt: job.createdAt, updatedAt: job.updatedAt } : null;
 
-export function createService({ generateFactory, fetchImpl = fetch, timeoutMs = 300000 } = {}) {
+export function createService({ generateFactory, fetchImpl = fetch, timeoutMs = 300000, logJev } = {}) {
     const running = new Map();
     const runningScopes = new Map();
     const profileService = createProfileService({ running, runningScopes, generateFactory, timeoutMs, publicJob });
@@ -186,15 +187,7 @@ export function createService({ generateFactory, fetchImpl = fetch, timeoutMs = 
                 const result = await runScene({ snapshot, settings, valid: () => !controller.signal.aborted,
                     save: () => saveProfile(root, scope, snapshot, settings.profiles[snapshot.profileKey]),
                     generate: async options => { await phase(options.systemPrompt.startsWith('Summarize') ? '사회적 프로필 판독' : '커뮤니티 반응 작성'); return generate(options); },
-                    classify: async state => {
-                        await phase('JEV 장면 판독');
-                        return decide({ ...settings, apiKey }, state, controller.signal, null, (url, options) => {
-                            const target = String(url).replace(/^\/proxy\//, '');
-                            const allowed = new Set(Object.values(PROVIDERS).flatMap(p => [p.endpoint, p.usage].filter(Boolean).map(u => u.replace(/^\/proxy\//, ''))));
-                            if (!allowed.has(target)) throw new Error('허용되지 않은 JEV 경로입니다.');
-                            return fetchImpl(target, { ...options, redirect: 'error' });
-                        });
-                    },
+                    classify: createJevClassifier({ settings, apiKey, signal: controller.signal, phase, fetchImpl, log: logJev }),
                 });
                 controller.signal.throwIfAborted();
                 await serial(root, async () => {
