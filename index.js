@@ -44,14 +44,17 @@ function tabs(container, feeds) {
         body.setAttribute('aria-labelledby', selected.id);
         body.append(el('div', feed.name, 'cl-platform'));
         for (const post of feed.posts) {
-            const article = el('article', undefined, 'cl-post');
+            const article = el('article', undefined, post.replyTo != null ? 'cl-post cl-reply' : 'cl-post');
             const head = el('div', undefined, 'cl-post-head');
             const groupNames = { acquaintances: '지인', colleagues: '동료·업계', fans: '팬덤', media: '미디어', public: '일반 이용자', critics: '비판적 이용자' };
             head.append(el('span', post.author.slice(0, 1), 'cl-avatar'), el('strong', feed.style === 'anon' ? 'Anonymous' : post.author), el('small', groupNames[post.group] || '이용자'));
             article.append(head);
+            const regionNames = { us: '🇺🇸 미국권', europe: '🇪🇺 유럽권', eastasia: '🌏 동아시아권' };
+            article.append(el('small', `${regionNames[post.region] || ''} · ${post.culture === 'korean' ? '💬 한국어 반응' : '🌐 한국어로 번역된 반응'}`, `cl-culture cl-culture-${post.culture === 'korean' ? 'ko' : 'translated'}`));
+            if (post.replyTo != null && feed.posts[post.replyTo]) article.append(el('small', `↳ ${feed.posts[post.replyTo].author}에게 답글`, 'cl-reply-reference'));
             if (post.title) article.append(el('h4', post.title));
             article.append(el('p', post.body));
-            const meta = feed.style === 'anon' ? `No.${feed.posts.indexOf(post) + 1} · 인용` : ['live', 'chat', 'sms'].includes(feed.style) ? '장면 속 대화' : feed.style === 'forum' ? '↑  ·  ↓  ·  답글' : feed.style === 'photo' ? '♡  답글 달기' : '♡  ↻  답글';
+            const meta = feed.style === 'anon' ? `No.${feed.posts.indexOf(post) + 1} · 인용` : ['live', 'chat'].includes(feed.style) ? '장면 속 대화' : feed.style === 'forum' ? '↑  ·  ↓  ·  답글' : feed.style === 'photo' ? '♡  답글 달기' : '♡  ↻  답글';
             article.append(el('div', meta, 'cl-meta'));
             body.append(article);
         }
@@ -227,6 +230,10 @@ async function init() {
         context.extensionSettings.crowdlens = initial; save();
     }
     if (settings().version !== 1) { console.warn('[CrowdLens] Unsupported settings version'); return; }
+    let cleanedPlatforms;
+    try { cleanedPlatforms = importPlatforms(settings().platforms); }
+    catch { cleanedPlatforms = importPlatforms(DEFAULT_PLATFORMS); }
+    if (JSON.stringify(cleanedPlatforms) !== JSON.stringify(settings().platforms)) { settings().platforms = cleanedPlatforms; save(); }
     const menu = document.querySelector('#extensionsMenu');
     if (menu && !document.querySelector('#crowdlens-menu')) {
         const item = el('div', 'CrowdLens 설정', 'list-group-item flex-container flexGap5');

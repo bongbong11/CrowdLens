@@ -11,13 +11,13 @@ const profiles = { character: profile, persona: { ...profile, name: 'Jamie', occ
 const config = () => ({ branch: 'main', provider: 'typesafe', apiKey: 'test-only', platforms: [DEFAULT_PLATFORMS[0]], profiles: {}, outputTokens: 8192 });
 const context = () => ({ characterId: 0, characters: [{ avatar: 'hunter.png', name: 'Hunter', description: '선수. 공개된 선수 경력. 비밀: 향수 수집.' }], chatId: 'chat1', name1: 'Jamie', powerUserSettings: { persona_description: '회사원' }, chat: [{ name: 'Jamie', is_user: true, mes: '경기 인터뷰를 볼까?' }, { name: 'Hunter', mes: '공개 인터뷰가 방송됐다.', swipe_id: 0 }] });
 const scores = () => ({ visible: .95, p0: .9, ...Object.fromEntries(Object.keys(GROUPS).map(g => [`p0_${g}`, g === 'public' ? .9 : .1])) });
-const modelFeed = () => JSON.stringify({ feeds: [{ platform: 'x', posts: Array.from({ length: 8 }, (_, i) => ({ author: `user${i}`, group: 'public', body: '인터뷰 봤다.' })) }] });
+const modelFeed = () => JSON.stringify({ feeds: [{ platform: 'x', posts: Array.from({ length: 8 }, (_, i) => ({ author: `user${i}`, group: 'public', region: 'us', body: '인터뷰 봤다.' })) }] });
 
-test('uploaded lorebook imports 10 platforms and shares archetypes without a fake archetype platform', { skip: !existsSync(new URL('../prompts/community-reactions.json', import.meta.url)) }, () => {
+test('uploaded lorebook imports 9 platforms and shares archetypes without SMS or a fake archetype platform', { skip: !existsSync(new URL('../prompts/community-reactions.json', import.meta.url)) }, () => {
     const source = JSON.parse(readFileSync(new URL('../prompts/community-reactions.json', import.meta.url), 'utf8'));
     const rows = importPlatforms(source);
-    assert.equal(rows.length, 10);
-    assert.deepEqual(rows.map(p => p.id), ['twitch', 'reddit', 'twitter', 'discord', 'youtube', 'ao3', 'instagram', 'tiktok', 'sms', '4chan']);
+    assert.equal(rows.length, 9);
+    assert.deepEqual(rows.map(p => p.id), ['twitch', 'reddit', 'twitter', 'discord', 'youtube', 'ao3', 'instagram', 'tiktok', '4chan']);
     assert.ok(rows.every(p => p.sharedPrompt.includes('User Archetypes')));
     assert.equal(rows.find(p => p.id === 'twitch').style, 'live');
     assert.equal(rows.find(p => p.id === '4chan').style, 'anon');
@@ -73,7 +73,7 @@ test('scene identity separates chat, swipe, edits, branch and persona', () => {
 test('first generation builds profiles, judges, writes feeds; second reuses profile; originals immutable', async () => {
     const c = context(), before = JSON.stringify(c), s = config(), calls = [];
     const run = () => runScene({ snapshot: capture(c, s, 1), settings: s, valid: () => true, save() {}, random: () => .5,
-        generate: async options => { calls.push(options); return options.systemPrompt.startsWith('소설') ? JSON.stringify(profiles) : modelFeed(); }, classify: async () => scores() });
+        generate: async options => { calls.push(options); return options.systemPrompt.startsWith('Summarize') ? JSON.stringify(profiles) : modelFeed(); }, classify: async () => scores() });
     assert.equal((await run()).feeds[0].posts.length, 8);
     assert.equal(calls.length, 2);
     await run(); assert.equal(calls.length, 3);
@@ -129,4 +129,24 @@ test('selected connection profile uses isolated ST service with 8192 output and 
     } };
     assert.equal(await requestModel(context, { profileId: 'profileA' }, { systemPrompt: 'system', prompt: 'data', responseLength: 8192 }, signal), '{"ok":true}');
     await assert.rejects(requestModel({}, { profileId: 'missing' }, {}, signal), /서비스/);
+});
+test('SMS is excluded from normalized imports and legacy lorebooks', () => {
+    const good = { id: 'reddit', name: 'Reddit', prompt: 'Forum comments.' };
+    assert.deepEqual(importPlatforms([good, { id: 'sms', name: 'SMS', prompt: 'Texts.' }]).map(p => p.id), ['reddit']);
+    const legacy = { entries: { 1: { comment: 'SMS 문자 Format', content: 'Texts.' }, 2: { comment: 'Reddit Format', content: 'Forum.' } } };
+    assert.deepEqual(importPlatforms(legacy).map(p => p.id), ['reddit']);
+    assert.throws(() => importPlatforms([{ id: 'sms', name: '문자', prompt: 'Texts.' }]));
+});
+test('regional translated replies preserve raw text and reject unsupported regions or invalid reply links', () => {
+    const plans = planFeed([DEFAULT_PLATFORMS[0]], scores());
+    const raw = parseJSON(modelFeed());
+    raw.feeds[0].posts[0].culture = 'korean'; raw.feeds[0].posts[0].region = 'eastasia';
+    raw.feeds[0].posts[1] = { ...raw.feeds[0].posts[1], culture: 'international', region: 'europe', replyTo: 0, body: '그 단어 하나 갖고 이 지랄이라고?' };
+    const [feed] = postsOf(raw, plans);
+    assert.equal(feed.posts[0].culture, 'korean');
+    assert.equal(feed.posts[1].region, 'europe');
+    assert.equal(feed.posts[1].replyTo, 0);
+    assert.equal(feed.posts[1].body, raw.feeds[0].posts[1].body);
+    raw.feeds[0].posts[1].replyTo = 1; assert.throws(() => postsOf(raw, plans), /답글/);
+    raw.feeds[0].posts[1].replyTo = null; raw.feeds[0].posts[1].region = 'unsupported'; assert.throws(() => postsOf(raw, plans), /권역/);
 });

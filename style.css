@@ -39,10 +39,11 @@
 .cl-shortvideo .cl-post { border-color: #34343a; }
 .cl-archive { background: #fffdfa; }
 .cl-archive .cl-platform { background: #8d1010; color: white; font-family: Georgia,serif; }
-.cl-sms { background: #f3f4f6; }
-.cl-sms .cl-post { margin: 8px 12px; border: 0; border-radius: 14px; background: #dcf2dc; }
-.cl-sms .cl-post:nth-child(odd) { background: #e5e7ee; margin-right: 28px; }
-.cl-sms .cl-avatar { display: none; }
+.cl-culture { display: block; color: #708299; font-size: .72em; margin: 5px 0; }
+.cl-culture-ko { color: #448a78; }
+.cl-live .cl-culture { display: none; }
+.cl-reply { margin-left: 12px; border-left: 2px solid #7a8ba266; }
+.cl-reply-reference { display: block; color: #788aa4; font-size: .8em; margin: 4px 0; }
 .cl-anon { background: #f1efdd; color: #343329; font-family: monospace; }
 .cl-anon .cl-platform { color: #8a1c1c; }
 .cl-anon .cl-post { background: #e5dfcc; margin: 8px; border: 1px solid #c2bda8; }
