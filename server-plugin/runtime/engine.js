@@ -1,10 +1,10 @@
 import { PROFILE_PROMPT, REACTION_PROMPT } from './prompts.js';
-import { PROVIDERS, parseJSON, profileOf, sceneQuestions, readDecisions, planFeed, postsOf } from './core.js';
+import { PROVIDERS, parseJSON, profileOf, sceneQuestions, readDecisions, planFeed, postsOf, selectedPlatforms } from './core.js';
 export { capture } from './snapshot.js';
 
 export async function decide(settings, state, signal, headers, transport = fetch) {
     if (!settings.apiKey) throw new Error('마법봉 → CrowdLens에서 JEV API 키를 입력해 주세요.');
-    const questions = sceneQuestions(settings.platforms);
+    const questions = sceneQuestions(selectedPlatforms(settings), settings.selectionMode === 'manual');
     const provider = PROVIDERS[settings.provider];
     if (!provider) throw new Error('JEV 제공자를 선택해 주세요.');
     signal = signal ? AbortSignal.any([signal, AbortSignal.timeout(30000)]) : AbortSignal.timeout(30000);
@@ -35,6 +35,8 @@ export async function decide(settings, state, signal, headers, transport = fetch
 }
 
 export async function runScene({ snapshot, settings, generate, classify, valid, save, random }) {
+    const platforms = selectedPlatforms(settings);
+    if (!platforms.length) throw new Error('생성할 커뮤니티를 하나 이상 선택해 주세요.');
     const outputTokens = Math.min(32768, Math.max(8000, Number(settings.outputTokens) || 8192));
     const guard = () => { if (!valid()) throw new Error('채팅 또는 장면이 바뀌어 생성을 취소했습니다.'); };
     guard();
@@ -48,7 +50,7 @@ export async function runScene({ snapshot, settings, generate, classify, valid, 
     }
     const scores = await classify({ profiles: record.profile, scene: snapshot.history.at(-1), history: snapshot.history.slice(0, -1) });
     guard();
-    const plans = planFeed(settings.platforms, scores, 8, random);
+    const plans = planFeed(platforms, scores, 8, random, settings.selectionMode === 'manual');
     if (!plans.length) return { feeds: [], reason: '이 장면에서 자연스럽게 반응할 공개 경로나 집단이 없습니다.' };
     const result = await generate({
         systemPrompt: REACTION_PROMPT,

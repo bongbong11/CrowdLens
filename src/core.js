@@ -52,6 +52,7 @@ export function importPlatforms(raw) {
         if (ids.has(id)) throw new Error('플랫폼 ID가 중복됩니다.');
         ids.add(id);
         const row = { id, name: text(p.name, 80), prompt: text(p.prompt, 20000), sharedPrompt: text(p.sharedPrompt, 12000), style: ['microblog', 'photo', 'forum', 'board', 'live', 'chat', 'video', 'archive', 'shortvideo', 'anon'].includes(p.style) ? p.style : 'board' };
+        row.moderation = p.moderation === 'unmoderated' || (p.moderation !== 'normal' && row.style === 'anon') ? 'unmoderated' : 'normal';
         if (!row.name || !row.prompt) throw new Error('각 플랫폼에 name과 prompt가 필요합니다.');
         return row;
     });
@@ -62,12 +63,15 @@ export function fingerprint(value) {
     for (const c of JSON.stringify(value)) h = Math.imul(h ^ c.charCodeAt(0), 16777619);
     return (h >>> 0).toString(36);
 }
-export function sceneQuestions(platforms) {
+export function selectedPlatforms(settings) {
+    return settings.selectionMode === 'manual' ? settings.platforms.filter(p => settings.selectedPlatforms?.includes(p.id)) : settings.platforms;
+}
+export function sceneQuestions(platforms, manual = false) {
     const questions = {
         visible: { type: 'noul', instructions: 'scene is the latest roleplay reply; history is background only. There is explicit evidence that other people can know about the current event, such as a public post, broadcast, report, witness, or participant sharing it. A past public event does not make the current private scene public. Celebrity status alone does not expose private events. Do not speculate.' },
     };
     for (const [i, platform] of platforms.entries()) {
-        questions[`p${i}`] = { type: 'noul', instructions: `Reactions to the known information in scene would naturally occur on ${platform.name} now. Platform description: ${platform.prompt.slice(0, 300)}` };
+        if (!manual) questions[`p${i}`] = { type: 'noul', instructions: `Reactions to the known information in scene would naturally occur on ${platform.name} now. Platform description: ${platform.prompt.slice(0, 300)}` };
         for (const [group, label] of Object.entries(GROUPS)) questions[`p${i}_${group}`] = { type: 'noul', instructions: `On ${platform.name}, ${label} could plausibly react to this event. Base the decision on recognition, public information, relationships in profiles, and the information exposure shown in scene. Do not invent a fandom or media interest for an ordinary person.` };
     }
     return questions;
@@ -81,10 +85,53 @@ export function readDecisions(data, questions) {
     }
     return out;
 }
-export function planFeed(platforms, scores, count = 8, random = Math.random) {
+export const VOICE_DICE = {
+    temperament: ['warm enthusiast', 'shy lurker', 'earnest literalist', 'smug know-it-all', 'petty nitpicker', 'deadpan cynic', 'provocative troll', 'lewd crass shitposter', 'mean-spirited gossip', 'contemptuous edgelord'],
+    mood: ['delighted', 'curious', 'bored', 'skeptical', 'irritated', 'envious', 'gleefully spiteful', 'obsessively invested'],
+    delivery: ['one-line fragment', 'rambling rant', 'pedantic correction', 'ironic aside', 'oversharing anecdote', 'rapid-fire heckling'],
+    roughness: ['plain casual speech', 'dry snark', 'blunt personal insults', 'heavy uncensored profanity', 'filthy vulgar innuendo'],
+    mannerism: ['no emoji', 'dry punctuation', 'expressive emoji', 'local meme tokens', 'occasional kaomoji', 'chat emotes'],
+};
+function voiceCast(platform, count, random) {
+    // Communities are platforms, not nationalities. Sample authors inside every feed.
+    const voices = [
+        { region: 'us', culture: 'international', language: 'US English', manner: 'conversational exaggeration; casual fragments; occasional lol or 💀, not Korean board slang' },
+        { region: 'europe', culture: 'international', language: 'European English', manner: 'understated sarcasm or a dry aside; varied individual voices, not a national caricature' },
+        { region: 'eastasia', culture: 'korean', language: 'Korean', manner: 'native Korean internet rhythm; context-appropriate ㅋㅋ, ㅠㅠ, short endings, or Korean wordplay' },
+        { region: 'eastasia', culture: 'international', language: 'Japanese', manner: 'natural Korean translation of a Japanese post; occasional w, 草, or restrained kaomoji when appropriate' },
+        { region: 'eastasia', culture: 'international', language: 'Chinese', manner: 'natural Korean translation of a Chinese post; contextual local wordplay or emoji, never a stock catchphrase in every line' },
+    ];
+    const avatars = ['✦', '🐈', '🪐', '🎧', '❋', '🐸', '🎮', '◈'];
+    const weights = platform.id === 'community' ? [0.08, 0.07, 0.65, 0.12, 0.08] : [0.28, 0.22, 0.2, 0.16, 0.14];
+    const varied = weights.map(weight => weight * (0.6 + random()));
+    const pickWeighted = (values, chances) => {
+        let draw = random() * chances.reduce((a, b) => a + b, 0);
+        const index = chances.findIndex(weight => (draw -= weight) < 0);
+        return values[index < 0 ? values.length - 1 : index];
+    };
+    const harsh = platform.moderation === 'unmoderated' || ['anon', 'board', 'forum'].includes(platform.style);
+    const cast = Array.from({ length: count }, (_, i) => {
+        let pick = random() * varied.reduce((a, b) => a + b, 0);
+        const index = varied.findIndex(weight => (pick -= weight) < 0);
+        const personality = [
+            pickWeighted(VOICE_DICE.temperament, harsh ? [1, 1, 1, 2, 3, 3, 4, 4, 3, 4] : [3, 2, 2, 2, 2, 2, 2, 1, 1, 1]),
+            ...['mood', 'delivery'].map(axis => VOICE_DICE[axis][Math.floor(random() * VOICE_DICE[axis].length)]),
+            pickWeighted(VOICE_DICE.roughness, harsh ? [1, 2, 3, 4, 3] : [4, 3, 2, 2, 1]),
+            VOICE_DICE.mannerism[Math.floor(random() * VOICE_DICE.mannerism.length)],
+        ].join('; ');
+        return { ...voices[index < 0 ? varied.length - 1 : index], personality, avatar: avatars[i % avatars.length] };
+    });
+    // Avoid a uniform cast without fixed regional quotas or fixed slots.
+    if (count >= 4 && new Set(cast.map(v => v.culture)).size === 1) {
+        const candidates = voices.filter(v => v.culture !== cast[0].culture && v.region !== cast[0].region);
+        Object.assign(cast[Math.floor(random() * count)], candidates[Math.floor(random() * candidates.length)]);
+    }
+    return cast;
+}
+export function planFeed(platforms, scores, count = 8, random = Math.random, manual = false) {
     if (!(scores.visible >= 0.65)) return [];
     return platforms.flatMap((platform, i) => {
-        if (!(scores[`p${i}`] >= 0.55)) return [];
+        if (!manual && !(scores[`p${i}`] >= 0.55)) return [];
         const candidates = Object.keys(GROUPS).filter(g => scores[`p${i}_${g}`] >= 0.55);
         const weights = candidates.map(group => ({ group, weight: scores[`p${i}_${group}`] ** 2 * (0.4 + random()) }));
         if (!weights.length) return [];
@@ -94,7 +141,7 @@ export function planFeed(platforms, scores, count = 8, random = Math.random) {
             const chosen = weights.find(item => (pick -= item.weight) < 0) ?? weights.at(-1);
             slots[chosen.group] = (slots[chosen.group] || 0) + 1;
         }
-        return [{ ...platform, slots }];
+        return [{ ...platform, moderation: platform.moderation || (platform.style === 'anon' ? 'unmoderated' : 'normal'), slots, voices: voiceCast(platform, count, random) }];
     });
 }
 export function postsOf(raw, plans) {
@@ -106,11 +153,12 @@ export function postsOf(raw, plans) {
         const posts = (Array.isArray(feed?.posts) ? feed.posts : []).slice(0, 32).map((post, index) => {
             if (!(remaining[post.group] > 0)) throw new Error('허용되지 않은 집단 또는 반응 수입니다.');
             remaining[post.group]--;
-            const body = text(post.body, 1600);
+            const removed = post.removed === true && plan.moderation !== 'unmoderated';
+            const body = removed ? '관리자가 삭제한 댓글입니다.' : text(post.body, 1600);
             if (!body) throw new Error('빈 반응이 반환되었습니다.');
             if (!['us', 'europe', 'eastasia'].includes(post.region)) throw new Error('반응의 커뮤니티 권역이 올바르지 않습니다.');
             if (post.replyTo != null && (!Number.isInteger(post.replyTo) || post.replyTo < 0 || post.replyTo >= index)) throw new Error('답글이 이전 댓글을 올바르게 가리키지 않습니다.');
-            return { author: text(post.author, 80) || '익명', group: post.group, region: post.region, replyTo: post.replyTo ?? null, culture: ['korean', 'international'].includes(post.culture) ? post.culture : culture, body, title: text(post.title, 160) };
+            return { author: text(post.author, 80) || '익명', avatar: plan.voices?.[index]?.avatar || '◈', group: post.group, region: post.region, removed, replyTo: post.replyTo ?? null, culture: ['korean', 'international'].includes(post.culture) ? post.culture : culture, body, title: text(post.title, 160) };
         });
         if (Object.values(remaining).some(n => n !== 0)) throw new Error('요청한 집단별 반응 수와 결과가 다릅니다. 다시 생성해 주세요.');
         return { id: plan.id, name: plan.name, style: plan.style, culture, posts };

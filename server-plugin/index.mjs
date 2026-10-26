@@ -25,7 +25,7 @@ export function registerRoutes(router, service, adapterReady = true) {
         try { response.json(await handler(request)); }
         catch (error) { response.status(error.status || 500).json({ ok: false, error: String(error.message || 'CrowdLens 서버 오류').slice(0, 500) }); }
     };
-    router.get('/health', route(async () => ({ ok: true, protocol: 2, version: '0.2.0', storage: true, backgroundJobs: true, modelAdapter: adapterReady })));
+    router.get('/health', route(async () => ({ ok: true, protocol: 3, version: '0.3.0', storage: true, backgroundJobs: true, modelAdapter: adapterReady })));
     router.post('/bootstrap', route(req => service.bootstrap(req, req.body?.legacy)));
     router.post('/settings', route(req => service.updateSettings(req, req.body)));
     router.post('/keys', route(req => service.saveKey(req, req.body)));

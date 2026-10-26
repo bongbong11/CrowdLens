@@ -14,6 +14,6 @@ export function capture(context, settings, index) {
     const branch = settings.branch || 'main';
     const profileKey = JSON.stringify([card.avatar, branch, source.persona.name, fingerprint(source.persona)]);
     const history = context.chat.slice(Math.max(0, index - 5), index + 1).filter(m => !m.is_system).map(m => ({ name: m.name, text: m.mes }));
-    const identity = [PRESENTATION_REVISION, card.avatar, context.chatId, branch, profileKey, fingerprint(source), fingerprint(settings.platforms), index, message.swipe_id ?? 0, history];
+    const identity = [PRESENTATION_REVISION, card.avatar, context.chatId, branch, profileKey, fingerprint(source), fingerprint(settings.platforms), index, message.swipe_id ?? 0, history, settings.selectionMode || 'auto', settings.selectionMode === 'manual' ? [...(settings.selectedPlatforms || [])].sort() : []];
     return { profileKey, source, history, identity, key: fingerprint(identity), sourceHash: fingerprint(source), scope: { character: card.avatar, chat: context.chatId, branch } };
 }

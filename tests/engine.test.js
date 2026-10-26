@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
-import { PROVIDERS, DEFAULT_PLATFORMS, GROUPS, importPlatforms, parseJSON, planFeed, readDecisions, sceneQuestions, postsOf } from '../src/core.js';
+import { PROVIDERS, DEFAULT_PLATFORMS, GROUPS, importPlatforms, parseJSON, planFeed, readDecisions, sceneQuestions, postsOf, selectedPlatforms } from '../src/core.js';
 import { capture, decide, runScene } from '../src/engine.js';
 import { readSheets } from '../src/sheets.js';
 
@@ -33,6 +33,29 @@ test('weighted sampling uses only eligible groups and exact count', () => {
     assert.deepEqual(plan.slots, { public: 8 });
     const varied = planFeed([DEFAULT_PLATFORMS[0]], { ...scores(), p0_fans: .9 }, 8, () => .9);
     assert.equal(Object.values(varied[0].slots).reduce((a, b) => a + b), 8);
+});
+test('manual selection excludes unchecked communities and skips only platform suitability', async () => {
+    const s = { ...config(), platforms: DEFAULT_PLATFORMS, selectionMode: 'manual', selectedPlatforms: ['x'] };
+    assert.deepEqual(selectedPlatforms(s).map(p => p.id), ['x']);
+    const q = sceneQuestions(selectedPlatforms(s), true);
+    assert.equal(q.p0, undefined); assert.ok(q.visible); assert.ok(q.p0_public); assert.equal(q.p1_public, undefined);
+    const manualScores = { ...scores(), p0: 0 };
+    const result = await runScene({ snapshot: capture(context(), s, 1), settings: s, valid: () => true, save() {}, random: () => .5,
+        generate: async options => options.systemPrompt.startsWith('Summarize') ? JSON.stringify(profiles) : modelFeed(), classify: async () => manualScores });
+    assert.deepEqual(result.feeds.map(f => f.id), ['x']);
+    assert.deepEqual(planFeed(selectedPlatforms(s), { ...manualScores, visible: 0 }, 8, Math.random, true), []);
+    await assert.rejects(runScene({ settings: { ...s, selectedPlatforms: [] } }), /하나 이상/);
+    assert.notEqual(capture(context(), s, 1).key, capture(context(), { ...s, selectedPlatforms: ['reddit'] }, 1).key);
+});
+test('one feed receives a mixed per-post cast instead of one nationality per platform', () => {
+    let seed = 17;
+    const random = () => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296);
+    const [plan] = planFeed([DEFAULT_PLATFORMS[0]], scores(), 8, random);
+    assert.equal(plan.voices.length, 8);
+    assert.ok(new Set(plan.voices.map(v => v.region)).size > 1);
+    assert.equal(new Set(plan.voices.map(v => v.culture)).size, 2);
+    assert.ok(new Set(plan.voices.map(v => v.personality)).size > 1);
+    assert.ok(plan.voices.every(v => v.language && v.manner && v.avatar));
 });
 test('malformed or incomplete JEV answers fail closed', () => {
     const q = sceneQuestions([DEFAULT_PLATFORMS[0]]);
@@ -139,4 +162,15 @@ test('regional translated replies preserve raw text and reject unsupported regio
     assert.equal(feed.posts[1].body, raw.feeds[0].posts[1].body);
     raw.feeds[0].posts[1].replyTo = 1; assert.throws(() => postsOf(raw, plans), /답글/);
     raw.feeds[0].posts[1].replyTo = null; raw.feeds[0].posts[1].region = 'unsupported'; assert.throws(() => postsOf(raw, plans), /권역/);
+});
+test('deleted markers are scene details; unmoderated feeds retain words and source drafts are discarded', () => {
+    const plans = planFeed([DEFAULT_PLATFORMS[0]], scores());
+    const raw = parseJSON(modelFeed());
+    raw.feeds[0].posts[0] = { ...raw.feeds[0].posts[0], removed: true, body: '', originalBody: 'private writing draft' };
+    assert.equal(postsOf(raw, plans)[0].posts[0].body, '관리자가 삭제한 댓글입니다.');
+    const underground = [{ ...plans[0], moderation: 'unmoderated' }];
+    raw.feeds[0].posts[0].body = '그 단어 하나 갖고 이 지랄이라고?';
+    const result = postsOf(raw, underground)[0].posts[0];
+    assert.equal(result.removed, false); assert.equal(result.body, raw.feeds[0].posts[0].body);
+    assert.equal(Object.hasOwn(result, 'originalBody'), false);
 });

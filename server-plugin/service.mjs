@@ -3,17 +3,20 @@ import { runScene, decide } from './runtime/engine.js';
 import { DEFAULT_PLATFORMS, PROVIDERS, importPlatforms, fingerprint } from './runtime/core.js';
 import { rootFor, read, write, serial, scopeOf, profileFile, chatFile, jobFile, digest } from './storage.mjs';
 
-export const defaultConfig = () => ({ version: 2, enabled: false, automatic: false, branch: 'main', provider: 'typesafe', profileId: '', outputTokens: 8192, platforms: structuredClone(DEFAULT_PLATFORMS) });
+export const defaultConfig = () => ({ version: 2, enabled: false, automatic: false, branch: 'main', branches: ['main'], selectionMode: 'auto', selectedPlatforms: DEFAULT_PLATFORMS.map(p => p.id), provider: 'typesafe', profileId: '', outputTokens: 8192, platforms: structuredClone(DEFAULT_PLATFORMS) });
 const record = value => value && typeof value === 'object' && !Array.isArray(value);
 function cleanConfig(raw) {
     const base = defaultConfig();
     const source = record(raw) ? raw : {};
-    base.enabled = source.enabled === true; base.automatic = source.automatic === true;
+    base.enabled = source.enabled === true; base.automatic = false;
     base.branch = String(source.branch || 'main').trim().slice(0, 80) || 'main';
+    base.branches = [...new Set(['main', base.branch, ...(Array.isArray(source.branches) ? source.branches.filter(v => typeof v === 'string').map(v => v.trim().slice(0, 80)).filter(Boolean).slice(0, 62) : [])])];
     if (Object.hasOwn(PROVIDERS, source.provider)) base.provider = source.provider;
     base.profileId = typeof source.profileId === 'string' ? source.profileId.slice(0, 200) : '';
     base.outputTokens = Math.min(32768, Math.max(8000, Math.trunc(Number(source.outputTokens) || 8192)));
     if (source.platforms) base.platforms = importPlatforms(source.platforms);
+    base.selectionMode = source.selectionMode === 'manual' ? 'manual' : 'auto';
+    base.selectedPlatforms = Array.isArray(source.selectedPlatforms) ? base.platforms.filter(p => source.selectedPlatforms.includes(p.id)).map(p => p.id) : base.platforms.map(p => p.id);
     if (typeof source.promptSource === 'string') base.promptSource = source.promptSource.slice(0, 200);
     return base;
 }
@@ -69,7 +72,7 @@ export function createService({ generateFactory, fetchImpl = fetch, timeoutMs = 
                 await write(root, 'settings.json', state);
             }
             const secrets = await read(root, 'secrets.json', {});
-            return { ok: true, protocol: 2, revision: state.revision, settings: state.settings, keyStatuses: keyStatuses(secrets), migratedLegacy: state.migratedLegacy === true, legacyAccepted: record(legacy) && !state.skippedLegacy && state.legacyHash === digest(JSON.stringify(legacy)), location: 'data/<account>/crowdlens/' };
+            return { ok: true, protocol: 3, revision: state.revision, settings: cleanConfig(state.settings), keyStatuses: keyStatuses(secrets), migratedLegacy: state.migratedLegacy === true, legacyAccepted: record(legacy) && !state.skippedLegacy && state.legacyHash === digest(JSON.stringify(legacy)), location: 'data/<account>/crowdlens/' };
         });
     }
     async function updateSettings(request, body) {
@@ -129,6 +132,8 @@ export function createService({ generateFactory, fetchImpl = fetch, timeoutMs = 
             const state = await read(root, 'settings.json');
             if (!state?.settings?.enabled) throw new Error('CrowdLens 사용을 먼저 켜 주세요.');
             if (body.revision !== state.revision) throw Object.assign(new Error('서버 설정이 변경되었습니다. 새로고침해 주세요.'), { status: 409 });
+            state.settings = cleanConfig(state.settings);
+            if (state.settings.selectionMode === 'manual' && !state.settings.selectedPlatforms.length) throw new Error('생성할 커뮤니티를 하나 이상 선택해 주세요.');
             const chat = await read(root, chatFile(scope), { results: {} });
             if (chat.lastJob) {
                 const prior = await read(root, jobFile(chat.lastJob));

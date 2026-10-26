@@ -78,6 +78,19 @@ test('stale tab settings cannot overwrite a newer server revision', async t => {
     await assert.rejects(f.service.updateSettings(f.request, { revision: f.revision, settings: f.config }), error => error.status === 409);
     assert.equal((await f.service.bootstrap(f.request)).settings.branch, 'AU');
 });
+test('branches, manual checks and edited prompts persist; old automatic generation is disabled', async t => {
+    const f = await fixture(t);
+    const modified = { ...f.config, automatic: true, branch: 'AU', branches: ['main', 'AU', 'AU'], selectionMode: 'manual', selectedPlatforms: [f.config.platforms[0].id, 'unknown'], platforms: [{ ...f.config.platforms[0], prompt: 'Edited platform voice.', sharedPrompt: 'Edited shared instruction.' }] };
+    await f.service.updateSettings(f.request, { revision: f.revision, settings: modified });
+    const restored = await createService().bootstrap(f.request);
+    assert.equal(restored.settings.automatic, false);
+    assert.deepEqual(restored.settings.branches, ['main', 'AU']);
+    assert.equal(restored.settings.branch, 'AU');
+    assert.equal(restored.settings.selectionMode, 'manual');
+    assert.deepEqual(restored.settings.selectedPlatforms, [f.config.platforms[0].id]);
+    assert.equal(restored.settings.platforms[0].prompt, 'Edited platform voice.');
+    assert.equal(restored.settings.platforms[0].sharedPrompt, 'Edited shared instruction.');
+});
 test('server completes a detached job without polling and results survive a new client/service', async t => {
     let release;
     const held = new Promise(resolve => release = resolve);
