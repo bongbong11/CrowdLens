@@ -56,6 +56,8 @@ test('one feed receives a mixed per-post cast instead of one nationality per pla
     assert.equal(new Set(plan.voices.map(v => v.culture)).size, 2);
     assert.ok(new Set(plan.voices.map(v => v.personality)).size > 1);
     assert.ok(plan.voices.every(v => v.language && v.manner && v.avatar));
+    const [eastAsianCast] = planFeed([DEFAULT_PLATFORMS[0]], scores(), 8, () => .9);
+    assert.equal(new Set(eastAsianCast.voices.map(v => v.culture)).size, 2);
 });
 test('malformed or incomplete JEV answers fail closed', () => {
     const q = sceneQuestions([DEFAULT_PLATFORMS[0]]);

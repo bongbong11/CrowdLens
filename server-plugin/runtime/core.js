@@ -123,7 +123,7 @@ function voiceCast(platform, count, random) {
     });
     // Avoid a uniform cast without fixed regional quotas or fixed slots.
     if (count >= 4 && new Set(cast.map(v => v.culture)).size === 1) {
-        const candidates = voices.filter(v => v.culture !== cast[0].culture && v.region !== cast[0].region);
+        const candidates = voices.filter(v => v.culture !== cast[0].culture);
         Object.assign(cast[Math.floor(random() * count)], candidates[Math.floor(random() * candidates.length)]);
     }
     return cast;
