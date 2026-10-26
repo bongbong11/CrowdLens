@@ -1,6 +1,6 @@
 # CrowdLens
 
-SillyTavern용 독립 커뮤니티 반응 확장. 연결 모델이 캐릭터·페르소나 사회적 프로필과 반응을 작성하고, JEV가 최신 장면의 공개 가능성·플랫폼·참여 집단을 판정합니다. Jeved 설치에 의존하지 않습니다.
+SillyTavern용 독립 커뮤니티 반응 확장. **0.2.0부터 판독·생성·저장은 전용 서버 플러그인에서 실행합니다.** 브라우저는 시트와 최근 장면을 전달하고 설정·진행 상태·피드를 표시합니다. Jeved·Scene Reader Hub 설치에 의존하지 않습니다.
 
 ## 설치
 
@@ -8,12 +8,22 @@ SillyTavern 1.18.0 이상 → 확장 설치 → `https://github.com/bongbong11/C
 
 로컬 설치는 이 폴더 전체를 `public/scripts/extensions/third-party/CrowdLens`에 복사합니다. 빌드나 추가 패키지는 필요 없습니다.
 
+**서버 플러그인도 설치해야 합니다.** [서버 플러그인 ZIP 다운로드](https://github.com/bongbong11/CrowdLens/raw/refs/heads/main/downloads/crowdlens-server.zip)를 풀어 `crowdlens` 폴더를 SillyTavern의 `plugins/` 안에 넣습니다. 또는 저장소의 `server-plugin/` 폴더를 `plugins/crowdlens/`로 복사합니다. 최종 경로가 `plugins/crowdlens/package.json`인지 확인하세요.
+
+`config.yaml`에서 아래 설정을 켜고 **SillyTavern 서버를 재시작**합니다. `enableCorsProxy`는 필요 없습니다.
+
+```yaml
+enableServerPlugins: true
+```
+
+서버는 SillyTavern 루트 폴더에서 실행합니다. 플러그인만 설치하거나 브라우저만 새로고침해서는 변경이 적용되지 않습니다. 화면 확장과 서버 플러그인을 함께 업데이트하세요.
+
 ## 사용
 
 1. 마법봉 메뉴 → **CrowdLens 설정**을 엽니다.
-2. JEV 공홈(TypeSafe), NanoGPT, OpenRouter 중 제공자를 선택하고 해당 키를 입력합니다. 제공자별 키는 현재 브라우저 탭 메모리에만 따로 보관하며 새로고침 시 다시 입력합니다.
-3. 공홈과 NanoGPT는 SillyTavern의 `config.yaml`에서 `enableCorsProxy: true`가 필요합니다. SillyTavern 프록시는 basicAuth와 함께 쓸 수 없습니다. NanoGPT는 씬판독기와 같은 구독 전용 경로를 사용하며 키의 Billing이 `Subscription only`인지 매 요청마다 확인합니다.
-4. 프로필·반응 작성용 연결 프로필을 고르거나 현재 SillyTavern 모델 연결을 사용하고 **사용**을 켭니다. 선택한 프로필은 씬판독기와 같은 `ConnectionManagerRequestService`로 요청하며 채팅의 연결 설정을 바꾸지 않습니다. 모델 최대 출력은 기본 **8,192**, 설정 범위는 **8,000~32,768** 토큰입니다. 연결 모델 자체의 지원 범위도 충족해야 합니다.
+2. **서버 저장소 연결됨** 표시를 확인합니다. JEV 제공자는 공홈 TypeSafe와 NanoGPT 두 개만 지원합니다.
+3. 해당 키를 입력하고 **JEV 키 서버에 저장**을 누릅니다. 제공자별 키는 계정별 전용 서버 파일에 저장되며 새로고침 후에도 유지됩니다. 브라우저에는 저장 여부만 반환합니다. NanoGPT는 씬판독기와 같은 구독 전용 경로를 사용하며 키의 Billing이 `Subscription only`인지 매 요청마다 확인합니다.
+4. **SillyTavern에 이미 저장한 연결 프로필**을 선택하고 **사용**을 켭니다. 선택하지 않으면 서버에 저장된 현재 선택 프로필, 그것도 없으면 저장된 현재 연결 설정을 사용합니다. 서버가 프로필의 모델·서버 URL·secret ID를 읽고 기존 SillyTavern 서버 생성 경로를 호출합니다. 별도 모델 키 입력은 필요 없으며 RP 채팅의 연결 설정을 바꾸지 않습니다. Chat Completion과 Text Completion 프로필을 지원합니다. 모델 최대 출력은 기본 **8,192**, 설정 범위는 **8,000~32,768** 토큰입니다. 연결 모델 자체의 지원 범위도 충족해야 합니다.
 5. RP 응답 아래 접이식 피드에서 **이 장면 반응 생성**을 누릅니다. **새 RP 응답에서 자동 생성**을 켜면 이후 응답부터 실행합니다. 과거 메시지를 일괄 자동 생성하지 않습니다.
 
 UI 진입점은 마법봉 설정과 RP 메시지 아래 피드 두 곳입니다. 설정 창에는 프로필 확인·다시 판독, 브랜치, 제공자, 토큰 한도, 프롬프트 가져오기, 피드 삭제가 모여 있습니다.
@@ -25,12 +35,29 @@ UI 진입점은 마법봉 설정과 RP 메시지 아래 피드 두 곳입니다.
 ## 프로필과 장면
 
 - 첫 반응 생성 때 연결 모델이 캐릭터 시트의 설명·성격과 현재 유저 페르소나를 읽어 짧은 프로필을 만듭니다. 시트 읽기 순서는 씬판독기의 `importCurrentSheet`와 같습니다. 캐릭터는 `character.data || character`, 페르소나는 문맥의 페르소나 설명 → 현재 아바타의 저장 항목 → 전역 페르소나 설명 순서입니다. 시나리오·노트·예시 대화·로어북은 자동으로 섞지 않습니다. 직업·인지도·대외평판·지인 관점·공개정보를 캐릭터와 유저 각각 저장합니다.
-- 저장 위치는 `extension_settings.crowdlens`입니다. 캐릭터 아바타 식별자·브랜치·페르소나별로 분리합니다. 시트나 페르소나가 달라지면 다시 판독합니다. 시트·채팅 파일·캐릭터 카드 확장 필드는 수정하지 않습니다.
+- 저장 위치는 계정별 `data/<account>/crowdlens/`입니다. 공통 설정·JEV 키·캐릭터/브랜치별 프로필·채팅/브랜치별 피드·서버 작업 기록을 별도 파일에 저장합니다. 캐릭터·채팅·브랜치 파일명은 해시로 만듭니다. 시트나 페르소나가 달라지면 다시 판독합니다. 시트·채팅 파일·캐릭터 카드 확장 필드는 수정하지 않습니다.
 - 기본 브랜치는 `main`입니다. 다른 이름을 쓰면 별도 프로필과 피드로 분리되고 기존 브랜치로 돌아갈 수 있습니다. 채팅 분기는 SillyTavern의 채팅 ID로 구별합니다.
 - JEV에는 짧은 프로필, 최신 RP 응답, 앞선 최대 5개 메시지를 보냅니다. 최신 장면만 판정하고 과거 메시지는 맥락으로 사용합니다. 비공개 장면에 공인이라는 이유만으로 대중 반응을 붙이지 않습니다.
 - 적합한 플랫폼과 가능한 집단을 판정한 후 상황 점수에 가중치를 둔 랜덤으로 플랫폼별 8개 반응의 집단 구성·비율을 정합니다. 일반인은 지인·동료 중심으로 판단하고 실제 근거 없는 팬덤·언론 관심은 만들지 않도록 지시합니다.
-- 결과는 최대 최근 80개 장면을 확장 설정에 저장합니다. 채팅·스와이프·응답 수정·브랜치·페르소나·시트·플랫폼 구성별로 구별합니다. 과거 피드는 모델에게 다시 보내지 않습니다. 장기 여론·계정 기억은 없습니다.
-- 채팅 전환·수정·스와이프·새 메시지·설정 변경은 진행 결과를 무효화합니다. JEV 요청은 취소되며, 이미 시작한 연결 모델의 `generateRaw` 요청은 완료될 수 있지만 변경된 장면에 저장하지 않습니다. 전체 작업 제한은 5분입니다.
+- 결과는 채팅·브랜치별 최근 최대 80개 장면을 전용 서버 파일에 저장합니다. 스와이프·응답 수정·페르소나·시트·플랫폼 구성별로 구별합니다. 과거 피드는 모델에게 다시 보내지 않습니다. 장기 여론·계정 기억은 없습니다.
+- 작업은 서버가 제출 당시의 장면 사본으로 실행합니다. 브라우저의 상태 조회가 없어도 계속됩니다. 탭을 닫거나 다른 화면/채팅으로 이동해도 완료 후 저장하고, 돌아오면 진행 상태·결과를 불러옵니다. 수정된 메시지에는 이전 장면의 결과를 붙이지 않습니다. 명시적인 서버 작업 취소 버튼이 있으며 실행 제한은 5분입니다.
+- SillyTavern 서버 자체를 종료하면 작업도 중단됩니다. 재시작 후 중단 상태를 표시하고 수동 재생성을 안내합니다. 서버 재시작으로 유료 모델 요청을 자동 중복 실행하지 않습니다. 동시에 제출 가능한 작업은 계정당 최대 4개이며 같은 캐릭터·브랜치 프로필 작업은 순서대로 실행합니다.
+
+## 전용 저장소와 이전
+
+```text
+data/<account>/crowdlens/
+  settings.json                         공통 설정과 변경 버전
+  secrets.json                          TypeSafe·NanoGPT 키 (브라우저에 반환하지 않음)
+  characters/<hash>/branches/<hash>.json 사회적 프로필
+  chats/<hash>/branches/<hash>.json      장면별 피드와 최근 작업
+  jobs/<uuid>.json                      작업 진행·완료·실패 기록
+  migration/legacy-settings-backup.json 이전 버전 원본 백업
+```
+
+기존 `extension_settings.crowdlens` 자료가 있고 새 서버 저장소가 비어 있으면 먼저 원본을 백업한 뒤 프로필·피드·설정을 이전합니다. 서버에서 같은 원본의 이전 완료를 확인한 경우에만 브라우저가 예전 CrowdLens 설정 항목을 정리합니다. 다른 원본이나 불완전한 이전은 예전 항목을 보존합니다. 기존 서버 자료를 예전 브라우저 자료로 덮어쓰지 않습니다.
+
+서버 파일은 임시 파일에 기록·동기화한 뒤 교체하고, 여러 요청의 파일 변경은 순서대로 처리합니다. 다른 탭의 오래된 설정은 변경 버전 검사로 거부합니다. API 키는 계정 데이터 폴더의 서버 파일에 저장되며 암호화된 금고는 아닙니다. 원본 프롬프트·시트·피드는 공개 GitHub에 업로드하지 않습니다.
 
 ## 포함된 프롬프트
 
@@ -52,19 +79,23 @@ Twitch, Reddit, Twitter/X, Discord, YouTube, AO3, Instagram, TikTok, 4chan의 9�
 
 `npm test`와 `npm run check`를 실행합니다. 추가 패키지는 필요 없습니다.
 
-로컬 프롬프트 포함 상태에서 20개 자동 테스트로 프롬프트 변환·플랫폼 수·SMS 제외·허용 권역·답글 참조·거친 본문 보존·JEV 3개 제공자 요청 형식·NanoGPT 구독 전용 확인·씬판독기와 같은 시트 읽기 순서·연결 프로필 요청·잘못된 응답 차단·비공개 장면·가중 랜덤·프로필 재사용·브랜치/수정 구분·원본 불변·출력 토큰 하한·취소를 확인했습니다. 원본 없는 공개 코드에서는 해당 파일 검증 1개를 건너뜁니다. 별도 브라우저 모의 환경에서 설정·키 분리·피드 생성·탭 키보드 이동·모바일 너비·HTML 이스케이프·수정 시 캐시 무효화를 검증했습니다.
+로컬 프롬프트 포함 상태에서 30개 자동 테스트가 통과했습니다. 제공자 2개·NanoGPT 구독 전용 확인·입력 판독·프로필·원본 불변·출력 토큰·SMS 제외·권역·답글 검증 외에, 전용 파일 저장·키 비반환·자료 이전과 원본 확인·계정/채팅/브랜치 격리·오래된 설정 충돌·중복 제출·취소·서버 재시작·SillyTavern 연결 프로필/지시 템플릿을 확인합니다. 원본 없는 공개 코드에서는 해당 파일 검증 1개를 건너뜁니다.
+
+브라우저와 실제 임시 HTTP 서버를 함께 사용한 모의 연동에서 **생성 중 탭 닫기 → 브라우저 없이 서버 완료·파일 저장 → 새 탭에서 피드/답글 복원**을 검증했습니다. 브라우저 모델 호출은 0회였습니다. 유료 공급자는 모의 응답이며 실제 API 키와 실제 SillyTavern 전체 인스턴스에 대한 실연동 시험은 아직입니다.
 
 실제 SillyTavern 인스턴스와 유료 모델/API 키를 사용한 실연동 시험은 아직 하지 않았습니다. API의 성공 응답은 코드와 모의 응답으로 검증했으며 실제 서비스 가용성이나 계정 권한을 확인한 것은 아닙니다. 판정 모델의 공개성·집단 추론은 완벽하지 않을 수 있어 수동 모드가 기본입니다. 현재 지원 범위는 1:1 캐릭터 채팅입니다.
 
 ## 검증한 API 근거
 
 - [SillyTavern 확장 개발 문서](https://docs.sillytavern.app/for-contributors/writing-extensions/)
-- [SillyTavern getContext 구현](https://github.com/SillyTavern/SillyTavern/blob/release/public/scripts/st-context.js): `extensionSettings`, `generateRaw`, `powerUserSettings`, 이벤트, 팝업 API
-- [SillyTavern generateRaw 구현](https://github.com/SillyTavern/SillyTavern/blob/release/public/script.js): 객체 인자, `systemPrompt`, `prompt`, `responseLength`, `trimNames`
-- [ST-jeved classifier.js](https://github.com/mossyfield/ST-jeved/blob/fec4a2d7edc3471d6860d438a7e4133b55d47c2d/src/classifier.js): TypeSafe·NanoGPT·OpenRouter 경로와 모델 ID
+- [SillyTavern 서버 플러그인 문서](https://docs.sillytavern.app/for-contributors/server-plugins/): 설치 구조와 플러그인 경로
+- [SillyTavern getContext 구현](https://github.com/SillyTavern/SillyTavern/blob/release/public/scripts/st-context.js): 시트·페르소나·이벤트·팝업
+- [SillyTavern Chat Completion 서버](https://github.com/SillyTavern/SillyTavern/blob/release/src/endpoints/backends/chat-completions.js): 기존 서버 생성과 사용자별 키 처리
+- [SillyTavern Text Completion 서버](https://github.com/SillyTavern/SillyTavern/blob/release/src/endpoints/backends/text-completions.js): 텍스트 생성 서버
+- [SillyTavern 연결 프로필](https://github.com/SillyTavern/SillyTavern/blob/release/public/scripts/extensions/connection-manager/index.js): 기존 프로필 저장 형식
 - [ST-jeved sensor-types.js](https://github.com/mossyfield/ST-jeved/blob/fec4a2d7edc3471d6860d438a7e4133b55d47c2d/src/sensor-types.js): `state`, `questions`, `type: noul`, `instructions`, `answers[id].noul` 형식
 - [Scene Reader Hub 시트 가져오기](https://github.com/bongbong11/Scene_Reader_Hub/blob/main/src/ui/forms/bind.js): 캐릭터·페르소나 읽기 우선순위
 - [Scene Reader Hub NanoGPT](https://github.com/bongbong11/Scene_Reader_Hub/blob/main/server-plugin/nanogpt-jev.cjs): 구독 전용 확인과 `response_format: questions` 요청
 - [Scene Reader Hub 모델 선택](https://github.com/bongbong11/Scene_Reader_Hub/blob/main/src/adapters/jev-connection.js): 공홈 `jev-latest`, NanoGPT `typesafe/jev-1.14`
 
-확인일: 2026-10-26. 독립 구현이며 Jeved·Scene Reader Hub 설치 및 내부 전역에 의존하지 않습니다. CrowdLens 자체 서버 플러그인은 필요 없습니다.
+확인일: 2026-10-26. CrowdLens 화면 확장과 전용 서버 플러그인이 모두 필요합니다. Jeved·Scene Reader Hub 설치 및 내부 전역에는 의존하지 않습니다.

@@ -1,7 +1,6 @@
 export const PROVIDERS = {
     typesafe: { name: 'JEV 공홈 (TypeSafe)', endpoint: '/proxy/https://api.typesafe.ai/v1/systemone', model: 'jev-latest' },
     nanogpt: { name: 'NanoGPT (구독 전용)', endpoint: '/proxy/https://nano-gpt.com/api/subscription/v1/chat/completions', usage: '/proxy/https://nano-gpt.com/api/subscription/v1/usage', model: 'typesafe/jev-1.14' },
-    openrouter: { name: 'OpenRouter', endpoint: 'https://openrouter.ai/api/alpha/decisions', model: 'typesafe/jev-1.13' },
 };
 export const GROUPS = {
     acquaintances: 'friends or acquaintances who can actually know about this event',

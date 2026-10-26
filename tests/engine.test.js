@@ -4,7 +4,6 @@ import { existsSync, readFileSync } from 'node:fs';
 import { PROVIDERS, DEFAULT_PLATFORMS, GROUPS, importPlatforms, parseJSON, planFeed, readDecisions, sceneQuestions, postsOf } from '../src/core.js';
 import { capture, decide, runScene } from '../src/engine.js';
 import { readSheets } from '../src/sheets.js';
-import { requestModel } from '../src/model.js';
 
 const profile = { name: 'Hunter', occupation: '선수', recognition: '스포츠 공인', reputation: '차분함', acquaintanceView: '장난스러움', publicInfo: '선수 경력' };
 const profiles = { character: profile, persona: { ...profile, name: 'Jamie', occupation: '일반 회사원', recognition: '일반인' } };
@@ -120,15 +119,6 @@ test('NanoGPT refuses balance fallback before sending decision request', async (
         count++; return { ok: true, json: async () => ({ routing: { paidSpendPolicyAllowsBalance: true, recommendedMode: 'subscription' } }) };
     }), /Subscription only/);
     assert.equal(count, 1);
-});
-test('selected connection profile uses isolated ST service with 8192 output and cancellation', async () => {
-    const signal = new AbortController().signal;
-    const context = { ConnectionManagerRequestService: {
-        getProfile: id => ({ id }), validateProfile() {},
-        sendRequest: async (id, messages, count, options) => { assert.equal(id, 'profileA'); assert.equal(messages[0].role, 'system'); assert.equal(count, 8192); assert.equal(options.signal, signal); assert.equal(options.includePreset, false); return { content: '{"ok":true}' }; },
-    } };
-    assert.equal(await requestModel(context, { profileId: 'profileA' }, { systemPrompt: 'system', prompt: 'data', responseLength: 8192 }, signal), '{"ok":true}');
-    await assert.rejects(requestModel({}, { profileId: 'missing' }, {}, signal), /서비스/);
 });
 test('SMS is excluded from normalized imports and legacy lorebooks', () => {
     const good = { id: 'reddit', name: 'Reddit', prompt: 'Forum comments.' };

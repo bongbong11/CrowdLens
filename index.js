@@ -1,13 +1,17 @@
-import { PROVIDERS, DEFAULT_PLATFORMS, importPlatforms, fingerprint } from './src/core.js';
-import { capture, decide, runScene } from './src/engine.js';
-import { requestModel } from './src/model.js';
+import { PROVIDERS, DEFAULT_PLATFORMS, importPlatforms } from './src/core.js';
+import { capture } from './src/snapshot.js';
+import { ServerClient } from './src/server-client.js';
 
 let personaModule = null;
 const ctx = () => { const context = SillyTavern.getContext(); return { ...context, user_avatar: personaModule?.user_avatar ?? context.user_avatar }; };
-const defaults = () => ({ version: 1, enabled: false, automatic: false, branch: 'main', provider: 'typesafe', profileId: '', outputTokens: 8192, platforms: structuredClone(DEFAULT_PLATFORMS), profiles: {}, results: {} });
-const settings = () => ctx().extensionSettings.crowdlens;
-const save = () => ctx().saveSettingsDebounced();
-const apiKeys = { typesafe: '', nanogpt: '', openrouter: '' };
+const defaults = () => ({ version: 2, enabled: false, automatic: false, branch: 'main', provider: 'typesafe', profileId: '', outputTokens: 8192, platforms: structuredClone(DEFAULT_PLATFORMS), profiles: {}, results: {} });
+let currentSettings = defaults(), storageError = '', scopeRequest = 0, currentScope = '';
+const settings = () => currentSettings;
+function reportStorage(error) { storageError = error.message; document.querySelectorAll('.cl-storage-status').forEach(n => n.textContent = storageError); }
+const server = new ServerClient(() => ctx().getRequestHeaders(), reportStorage);
+const save = () => server.save(settings());
+const apiKeys = { typesafe: '', nanogpt: '' };
+let keyStatuses = { typesafe: false, nanogpt: false };
 let active = null, epoch = 0;
 const panels = new Map();
 function el(tag, content, className) {
@@ -22,7 +26,43 @@ function button(label, action) {
     node.addEventListener('click', action);
     return node;
 }
-function cancel() { epoch++; active?.controller.abort(); }
+function cancel() { epoch++; active = null; }
+function scopeNow() {
+    const c = ctx(), character = c.characters?.[c.characterId]?.avatar;
+    return !c.groupId && character && c.chatId ? { character, chat: c.chatId, branch: settings().branch || 'main' } : null;
+}
+async function refreshScope(force = false) {
+    const scope = scopeNow(), identity = JSON.stringify(scope);
+    if (!server.ready || !scope) { currentScope = ''; settings().profiles = {}; settings().results = {}; renderAll(); return; }
+    if (!force && identity === currentScope) return;
+    const request = ++scopeRequest;
+    if (identity !== currentScope) { settings().profiles = {}; settings().results = {}; }
+    currentScope = identity;
+    try {
+        const data = await server.request('scope', { scope });
+        if (request !== scopeRequest || identity !== JSON.stringify(scopeNow())) return;
+        settings().profiles = data.profiles; settings().results = data.results; renderAll();
+        if (data.job && ['queued', 'running'].includes(data.job.status) && !active) void watchJob(data.job, scope);
+    } catch (error) { reportStorage(error); }
+}
+async function watchJob(job, scope) {
+    const token = ++epoch, task = { id: job.id, scope }; active = task; renderAll();
+    try {
+        while (token === epoch && JSON.stringify(scope) === JSON.stringify(scopeNow())) {
+            const data = await server.request(`jobs/${job.id}`, undefined, 'GET');
+            if (token !== epoch) return;
+            document.querySelectorAll('.crowdlens .cl-status').forEach(n => n.textContent = `${data.job.phase} · 서버에서 실행 중 (탭을 닫아도 계속됩니다)`);
+            if (!['queued', 'running'].includes(data.job.status)) {
+                if (active === task) active = null;
+                await refreshScope(true);
+                if (data.job.status !== 'completed') document.querySelectorAll('.crowdlens .cl-status').forEach(n => n.textContent = data.job.error || '서버 작업이 중단되었습니다.');
+                return;
+            }
+            await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+    } catch (error) { reportStorage(error); }
+    finally { if (active === task) { active = null; renderAll(); } }
+}
 function rpIndex() { return ctx().chat.findLastIndex(m => !m.is_user && !m.is_system); }
 function canRun() { const c = ctx(); return !active && !c.streamingProcessor && !document.querySelector('#send_but[style*="display: none"]'); }
 function stateAt(index) {
@@ -107,51 +147,32 @@ function renderAll() {
 async function generate(index) {
     if (!settings().enabled) return;
     if (!canRun()) { if (panels.get(index)) panels.get(index).textContent = '현재 생성이 끝난 뒤 다시 눌러 주세요.'; return; }
-    if (!apiKeys[settings().provider]) { if (panels.get(index)) panels.get(index).textContent = '마법봉 → CrowdLens 설정에서 선택한 제공자의 JEV 키를 입력해 주세요.'; return; }
-    const controller = new AbortController();
-    const token = ++epoch;
-    active = { controller };
-    renderAll();
-    const status = panels.get(index);
-    if (status) status.textContent = '프로필 확인 → JEV 장면 판독 → 커뮤니티 반응 작성 중…';
-    const timeout = setTimeout(() => controller.abort(), 300000);
+    if (!server.ready) { reportStorage(new Error('CrowdLens 서버 플러그인을 먼저 연결해 주세요.')); return; }
+    if (!keyStatuses[settings().provider]) { if (panels.get(index)) panels.get(index).textContent = '마법봉 → CrowdLens 설정에서 선택한 제공자의 JEV 키를 서버에 저장해 주세요.'; return; }
+    const token = ++epoch, submitting = { submitting: true }; active = submitting; renderAll();
     try {
-        const s = settings();
-        const snapshot = capture(ctx(), s, index);
-        const signature = fingerprint([s.branch, s.platforms, s.provider, s.profileId, s.outputTokens]);
-        const valid = () => {
-            try { return !controller.signal.aborted && token === epoch && s.enabled && signature === fingerprint([s.branch, s.platforms, s.provider, s.profileId, s.outputTokens]) && stateAt(index).snapshot.key === snapshot.key; }
-            catch { return false; }
-        };
-        const result = await runScene({ snapshot, settings: s, valid, save,
-            generate: options => requestModel(ctx(), s, options, controller.signal),
-            classify: state => decide({ ...s, apiKey: apiKeys[s.provider] }, state, controller.signal, ctx().getRequestHeaders),
-        });
-        if (!valid()) return;
-        s.results[snapshot.key] = { identity: JSON.stringify(snapshot.identity), result };
-        const keys = Object.keys(s.results);
-        keys.slice(0, Math.max(0, keys.length - 80)).forEach(k => delete s.results[k]);
-        save();
+        const snapshot = capture(ctx(), settings(), index);
+        const data = await server.submit(snapshot);
+        if (active === submitting) active = null;
+        if (token === epoch) await watchJob(data.job, snapshot.scope);
     } catch (error) {
-        if (token === epoch && status) status.textContent = controller.signal.aborted ? '시간 초과 또는 취소되었습니다. 다시 시도해 주세요.' : error.message;
-        console.warn('[CrowdLens]', error.name);
-        active = null;
-        document.querySelectorAll('.crowdlens button').forEach(b => b.disabled = false);
-        return;
-    } finally { clearTimeout(timeout); active = null; }
-    renderAll();
+        if (active === submitting) active = null;
+        renderAll(); if (panels.get(index)) panels.get(index).textContent = error.message;
+    }
 }
 function field(root, label, value, change, type = 'text') {
     const wrap = el('label', undefined, 'cl-field');
     const input = el('input'); input.type = type;
     if (type === 'checkbox') input.checked = value; else input.value = value;
-    input.addEventListener('change', () => { cancel(); change(type === 'checkbox' ? input.checked : input.value); save(); renderAll(); });
+    input.addEventListener('change', () => { cancel(); change(type === 'checkbox' ? input.checked : input.value); save(); void refreshScope(); renderAll(); });
     wrap.append(el('span', label), input); root.append(wrap); return input;
 }
 async function openSettings() {
     const s = settings();
     const root = el('div', undefined, 'cl-settings');
     root.append(el('h3', 'CrowdLens'), el('p', '장면 한정 가상 커뮤니티 피드. 캐릭터 시트와 원본 채팅은 수정하지 않습니다.'));
+    root.append(el('p', storageError || (server.ready ? '서버 저장소 연결됨 · 계정별 crowdlens/ 폴더 · 판독/생성은 서버에서 실행' : 'CrowdLens 서버 플러그인이 필요합니다.'), 'cl-storage-status'));
+    root.append(button('서버 저장소 다시 연결', async () => { try { await connectStorage(); await refreshScope(true); storageError = ''; root.querySelector('.cl-storage-status').textContent = '서버 저장소 연결됨'; } catch (error) { reportStorage(error); } }));
     field(root, '사용', s.enabled, v => s.enabled = v, 'checkbox');
     field(root, '새 RP 응답에서 자동 생성', s.automatic, v => s.automatic = v, 'checkbox');
     field(root, '프로필 브랜치 (기본 main)', s.branch, v => s.branch = v.trim().slice(0, 80) || 'main');
@@ -173,17 +194,23 @@ async function openSettings() {
     for (const [id, provider] of Object.entries(PROVIDERS)) { const option = el('option', provider.name); option.value = id; providerSelect.append(option); }
     providerSelect.value = s.provider;
     providerLabel.append(el('span', 'JEV 연결 제공자'), providerSelect); root.append(providerLabel);
-    const keyInput = field(root, '선택한 제공자의 API 키 (현재 탭에서만 보관)', apiKeys[s.provider], v => apiKeys[s.provider] = v.trim(), 'password');
+    const keyLabel = el('label', undefined, 'cl-field'), keyInput = el('input'); keyInput.type = 'password'; keyInput.autocomplete = 'off';
+    keyInput.addEventListener('input', () => apiKeys[s.provider] = keyInput.value.trim());
+    keyLabel.append(el('span', '선택한 제공자의 API 키 (서버 전용 저장)'), keyInput); root.append(keyLabel);
     const providerHint = el('p', '', 'cl-status'); root.append(providerHint);
     const updateProvider = () => {
         keyInput.value = apiKeys[s.provider];
-        providerHint.textContent = s.provider === 'typesafe'
-            ? '공홈 연결: SillyTavern config.yaml에서 enableCorsProxy: true가 필요합니다. 기본 인증(basicAuth)과 함께 사용할 수 없습니다. 모델: jev-latest'
-            : s.provider === 'nanogpt' ? '씬판독기와 같은 구독 전용 경로를 사용합니다. 키의 Billing을 Subscription only로 설정하세요. enableCorsProxy: true가 필요하며 basicAuth와 함께 사용할 수 없습니다. 모델: typesafe/jev-1.14'
-            : `모델: ${PROVIDERS[s.provider].model}. 제공자별 API 키는 서로 분리해 보관합니다.`;
+        providerHint.textContent = `${keyStatuses[s.provider] ? '서버에 키 저장됨' : '저장된 키 없음'} · 모델: ${PROVIDERS[s.provider].model}. 서버가 직접 연결하므로 CORS 프록시는 필요 없습니다.${s.provider === 'nanogpt' ? ' NanoGPT 키는 Billing을 Subscription only로 설정하세요.' : ''}`;
     };
     providerSelect.addEventListener('change', () => { cancel(); s.provider = providerSelect.value; save(); updateProvider(); });
     updateProvider();
+    root.append(button('JEV 키 서버에 저장', async () => {
+        try { const provider = s.provider; if (!apiKeys[provider]) throw new Error('저장할 키를 입력해 주세요.'); const data = await server.request('keys', { provider, key: apiKeys[provider] }); keyStatuses = data.keyStatuses; apiKeys[provider] = ''; if (provider === s.provider) keyInput.value = ''; updateProvider(); }
+        catch (error) { providerHint.textContent = error.message; }
+    }), button('선택한 JEV 키 삭제', async () => {
+        try { const data = await server.request('keys', { provider: s.provider, key: '' }); keyStatuses = data.keyStatuses; apiKeys[s.provider] = ''; keyInput.value = ''; updateProvider(); }
+        catch (error) { providerHint.textContent = error.message; }
+    }));
     root.append(el('p', '프로필·반응은 SillyTavern 연결 모델이 작성합니다. 선택한 JEV 제공자는 짧은 프로필과 최근 6개 메시지를 받아 판정합니다.'));
     const notice = el('p', `${s.platforms.length}개 플랫폼 · ${s.promptSource || '기본 예시 프롬프트'}`, 'cl-status');
     const file = el('input'); file.type = 'file'; file.accept = '.json,application/json';
@@ -208,32 +235,37 @@ async function openSettings() {
     root.append(button('현재 브랜치 프로필 새로 판독', async () => {
         try {
             const snap = capture(ctx(), s, rpIndex());
-            cancel(); delete s.profiles[snap.profileKey]; s.results = {}; save();
+            cancel(); await server.request('scope/clear', { scope: snap.scope, profileKey: snap.profileKey }); await refreshScope(true);
             await generate(rpIndex()); showProfile();
         } catch (e) { notice.textContent = e.message; }
     }), profiles);
-    root.append(button('피드 저장 결과 지우기', () => { cancel(); s.results = {}; save(); renderAll(); notice.textContent = '저장된 피드를 지웠습니다.'; }));
+    root.append(button('현재 채팅·브랜치 피드 지우기', async () => { try { await server.request('scope/clear', { scope: scopeNow() }); await refreshScope(true); notice.textContent = '현재 채팅·브랜치의 저장된 피드를 지웠습니다.'; } catch (error) { notice.textContent = error.message; } }));
+    root.append(button('진행 중 서버 작업 취소', async () => { try { if (active?.id) await server.request(`jobs/${active.id}/cancel`, {}); else notice.textContent = '현재 화면에서 확인 중인 서버 작업이 없습니다.'; } catch (error) { notice.textContent = error.message; } }));
     showProfile();
     await ctx().callGenericPopup(root, ctx().POPUP_TYPE.TEXT, '', { wide: true, large: true });
 }
-async function init() {
-    personaModule = await import('/scripts/personas.js').catch(() => null);
+async function connectStorage() {
     const context = ctx();
-    if (!context.extensionSettings.crowdlens) {
-        const initial = defaults();
+    const legacy = context.extensionSettings.crowdlens;
+    let initial = legacy;
+    if (!initial) {
+        initial = defaults();
         try {
             const response = await fetch(new URL('./prompts/community-reactions.json', import.meta.url));
             if (!response.ok) throw new Error('bundled prompt load failed');
             initial.platforms = importPlatforms(await response.json());
             initial.promptSource = '커뮤반응모음.json';
         } catch { console.warn('[CrowdLens] Bundled prompts unavailable; import the source JSON in settings.'); }
-        context.extensionSettings.crowdlens = initial; save();
     }
-    if (settings().version !== 1) { console.warn('[CrowdLens] Unsupported settings version'); return; }
-    let cleanedPlatforms;
-    try { cleanedPlatforms = importPlatforms(settings().platforms); }
-    catch { cleanedPlatforms = importPlatforms(DEFAULT_PLATFORMS); }
-    if (JSON.stringify(cleanedPlatforms) !== JSON.stringify(settings().platforms)) { settings().platforms = cleanedPlatforms; save(); }
+    const data = await server.initialize(initial);
+    Object.assign(currentSettings, data.settings, { profiles: {}, results: {} }); keyStatuses = data.keyStatuses; storageError = '';
+    if (legacy && data.legacyAccepted && context.extensionSettings.crowdlens === legacy) { delete context.extensionSettings.crowdlens; context.saveSettingsDebounced(); }
+    else if (legacy && !data.legacyAccepted) storageError = '서버에는 기존 자료가 있어 현재 서버 자료를 사용합니다. 일치하지 않는 예전 settings.json 자료는 삭제하지 않고 보존했습니다.';
+}
+async function init() {
+    personaModule = await import('/scripts/personas.js').catch(() => null);
+    const context = ctx();
+    try { await connectStorage(); } catch (error) { reportStorage(error); }
     const menu = document.querySelector('#extensionsMenu');
     if (menu && !document.querySelector('#crowdlens-menu')) {
         const item = el('div', 'CrowdLens 설정', 'list-group-item flex-container flexGap5');
@@ -244,7 +276,7 @@ async function init() {
         menu.append(item);
     }
     const events = context.eventTypes;
-    for (const name of ['CHAT_CHANGED', 'MESSAGE_EDITED', 'MESSAGE_DELETED', 'MESSAGE_SWIPED', 'MESSAGE_SENT']) if (events[name]) context.eventSource.on(events[name], () => { cancel(); renderAll(); });
+    for (const name of ['CHAT_CHANGED', 'MESSAGE_EDITED', 'MESSAGE_DELETED', 'MESSAGE_SWIPED', 'MESSAGE_SENT']) if (events[name]) context.eventSource.on(events[name], () => { cancel(); void refreshScope(true); renderAll(); });
     if (events.CHARACTER_MESSAGE_RENDERED) context.eventSource.on(events.CHARACTER_MESSAGE_RENDERED, index => render(Number(index)));
     if (events.GENERATION_ENDED) context.eventSource.on(events.GENERATION_ENDED, () => {
         renderAll();
@@ -254,6 +286,6 @@ async function init() {
             try { if (!stateAt(index).result) void generate(index); } catch { /* No supported chat open. */ }
         }, 100);
     });
-    renderAll();
+    await refreshScope(true); renderAll();
 }
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init, { once: true }); else init();

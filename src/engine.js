@@ -1,21 +1,6 @@
-import { PROFILE_PROMPT, REACTION_PROMPT, PRESENTATION_REVISION } from './prompts.js';
-import { PROVIDERS, parseJSON, profileOf, fingerprint, sceneQuestions, readDecisions, planFeed, postsOf } from './core.js';
-import { readSheets } from './sheets.js';
-
-export function capture(context, settings, index) {
-    if (context.groupId) throw new Error('현재 버전은 1:1 캐릭터 채팅을 지원합니다.');
-    const card = context.characters[context.characterId];
-    if (!card?.avatar || !context.chatId) throw new Error('캐릭터 채팅을 먼저 열어 주세요.');
-    const message = context.chat[index];
-    if (!message || message.is_user || message.is_system) throw new Error('RP 응답 메시지를 선택해 주세요.');
-    const source = readSheets(context);
-    if (!source.character.description.trim() && !source.character.personality.trim()) throw new Error('캐릭터 시트 원문이 비어 있습니다. 카드 설정을 확인해 주세요.');
-    const branch = settings.branch || 'main';
-    const profileKey = JSON.stringify([card.avatar, branch, context.name1, fingerprint(source.persona)]);
-    const history = context.chat.slice(Math.max(0, index - 5), index + 1).filter(m => !m.is_system).map(m => ({ name: m.name, text: m.mes }));
-    const identity = [PRESENTATION_REVISION, card.avatar, context.chatId, branch, profileKey, fingerprint(source), fingerprint(settings.platforms), index, message.swipe_id ?? 0, history];
-    return { profileKey, source, history, identity, key: fingerprint(identity), sourceHash: fingerprint(source) };
-}
+import { PROFILE_PROMPT, REACTION_PROMPT } from './prompts.js';
+import { PROVIDERS, parseJSON, profileOf, sceneQuestions, readDecisions, planFeed, postsOf } from './core.js';
+export { capture } from './snapshot.js';
 
 export async function decide(settings, state, signal, headers, transport = fetch) {
     if (!settings.apiKey) throw new Error('마법봉 → CrowdLens에서 JEV API 키를 입력해 주세요.');
@@ -59,7 +44,7 @@ export async function runScene({ snapshot, settings, generate, classify, valid, 
         guard();
         record = { sourceHash: snapshot.sourceHash, profile: profileOf(parseJSON(result)) };
         settings.profiles[snapshot.profileKey] = record;
-        save();
+        await save();
     }
     const scores = await classify({ profiles: record.profile, scene: snapshot.history.at(-1), history: snapshot.history.slice(0, -1) });
     guard();
