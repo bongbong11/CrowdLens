@@ -11,11 +11,11 @@ export class ServerClient {
     }
     async initialize(legacy) {
         const data = await this.request('bootstrap', { legacy });
-        if (data.protocol !== 4 || !data.settings?.originalSourceRevision) throw new Error('CrowdLens 서버 플러그인을 0.3.2 이상으로 업데이트하고 SillyTavern 서버를 재시작해 주세요.');
+        if (data.protocol !== 5 || !data.settings?.originalSourceRevision) throw new Error('CrowdLens 서버 플러그인을 0.4.0 이상으로 업데이트하고 SillyTavern 서버를 재시작해 주세요.');
         this.revision = data.revision; this.ready = true; this.failure = null; return data;
     }
     save(settings) {
-        const { profiles, results, ...config } = settings;
+        const { profiles, results, sourceInputs, sourceSelections, sourceSelectionRevisions, latestResultKey, ...config } = settings;
         const snapshot = structuredClone(config);
         this.queue = this.queue.catch(() => {}).then(async () => {
             if (!this.ready) throw new Error('서버 저장소를 먼저 연결해 주세요.');

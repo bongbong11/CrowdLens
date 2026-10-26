@@ -1,4 +1,4 @@
-// Read-only source precedence matches Scene Reader Hub's importCurrentSheet.
+// Base card/persona fields; selected linked lore is assembled separately by source-reader.
 export function readSheets(context) {
     const character = context.characters?.[context.characterId];
     const card = character?.data || character;

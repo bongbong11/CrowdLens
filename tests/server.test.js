@@ -9,6 +9,9 @@ import { createService } from '../server-plugin/service.mjs';
 import { rootFor, read, write, profileFile, chatFile, jobFile } from '../server-plugin/storage.mjs';
 import { selectConnection, invokeChatRouter, makeGenerator } from '../server-plugin/model-bridge.mjs';
 import { capture } from '../src/engine.js';
+import { captureProfile } from '../src/snapshot.js';
+import { sourceIdentity, defaultSelection } from '../src/source-selection.js';
+import { prepareSource } from '../src/source-reader.js';
 import { importPlatforms } from '../src/core.js';
 const DEFAULT_PLATFORMS = importPlatforms(JSON.parse(await fs.readFile(new URL('../prompts/community-reactions.json', import.meta.url), 'utf8')));
 const LEGACY_DEFAULT_PLATFORMS = ['x', 'instagram', 'reddit', 'community'].map(id => ({ id, name: id, style: 'board', prompt: 'Old example.' }));
@@ -157,6 +160,46 @@ test('manual jobs require no JEV key, make zero JEV calls, and store English pro
     assert.equal(data.profiles[snap.profileKey].language, 'en');
     assert.equal(data.profiles[snap.profileKey].profile.character.occupation, 'Professional player');
 });
+test('profile-only job makes one model call in empty chat, no JEV/reactions, and preserves saved feeds', async t => {
+    let calls = 0, release;
+    const gate = new Promise(resolve => release = resolve);
+    const f = await fixture(t, { fetchImpl: () => assert.fail('profile JEV'), generateFactory: async () => async options => { calls++; assert.ok(options.systemPrompt.startsWith('Summarize')); await gate; return modelProfile; } });
+    f.ctx.chat = [];
+    await f.service.saveKey(f.request, { provider: 'typesafe', key: '' });
+    const choice = defaultSelection(), id = sourceIdentity(f.ctx, f.config.branch), prepared = await prepareSource(f.ctx, choice);
+    await f.service.selectSources(f.request, { scope: id.scope, profileKey: id.profileKey, selection: choice, revision: 0 });
+    const snapshot = captureProfile(f.ctx, { ...f.config, sourceSelections: { [id.profileKey]: choice }, sourceInputs: { [id.profileKey]: prepared } });
+    const results = { keep: { identity: 'old', result: { feeds: [{ id: 'x', posts: [] }], reason: '' } } };
+    await write(f.root, chatFile(id.scope), { results, latestResultKey: 'keep' });
+    const request = { scope: id.scope, snapshot, revision: f.revision };
+    const first = await f.service.submitProfile(f.request, request), duplicate = await f.service.submitProfile(f.request, request);
+    assert.equal(first.job.id, duplicate.job.id); release();
+    assert.equal((await finish(f.service, f.request, first.job.id)).status, 'completed'); assert.equal(calls, 1);
+    const restored = await f.service.scopeData(f.request, id.scope);
+    assert.deepEqual(restored.results, results); assert.equal(restored.latestResultKey, 'keep');
+    assert.equal(restored.profiles[id.profileKey].language, 'en');
+    assert.deepEqual(restored.sourceSelections[id.profileKey], choice);
+});
+test('source-selection change rejects late profile save and malformed profile preserves prior data', async t => {
+    let release, malformed = false;
+    const gate = new Promise(resolve => release = resolve);
+    const f = await fixture(t, { generateFactory: async () => async () => { await gate; return malformed ? 'broken' : modelProfile; } });
+    const id = sourceIdentity(f.ctx, f.config.branch), choice = defaultSelection(), prepared = await prepareSource(f.ctx, choice);
+    await f.service.selectSources(f.request, { scope: id.scope, profileKey: id.profileKey, selection: choice, revision: 0 });
+    const old = { sourceHash: 'old', language: 'en', profile: { character: person, persona: person } };
+    const stored = await read(f.root, profileFile(id.scope)); stored.profiles[id.profileKey] = old; await write(f.root, profileFile(id.scope), stored);
+    const snapshot = captureProfile(f.ctx, { ...f.config, sourceSelections: { [id.profileKey]: choice }, sourceInputs: { [id.profileKey]: prepared } });
+    const first = await f.service.submitProfile(f.request, { scope: id.scope, snapshot, revision: f.revision });
+    const changed = { ...choice, persona: { sheet: false, lore: [] } };
+    await f.service.selectSources(f.request, { scope: id.scope, profileKey: id.profileKey, selection: changed, revision: 1 });
+    release(); assert.equal((await finish(f.service, f.request, first.job.id)).status, 'failed');
+    assert.deepEqual((await f.service.scopeData(f.request, id.scope)).profiles[id.profileKey], old);
+    const nextPrepared = await prepareSource(f.ctx, changed), next = captureProfile(f.ctx, { ...f.config, sourceSelections: { [id.profileKey]: changed }, sourceInputs: { [id.profileKey]: nextPrepared } });
+    malformed = true;
+    const second = await f.service.submitProfile(f.request, { scope: id.scope, snapshot: next, revision: f.revision });
+    assert.equal((await finish(f.service, f.request, second.job.id)).status, 'failed');
+    assert.deepEqual((await f.service.scopeData(f.request, id.scope)).profiles[id.profileKey], old);
+});
 test('selected-feed translation sends no sheets or lorebook; duplicate and cached requests cost no extra call', async t => {
     const calls = [];
     let release;
@@ -188,7 +231,7 @@ test('duplicate submissions share one background job and another account cannot 
     assert.equal(a.job.id, b.job.id);
     const otherRoot = path.join(f.base, 'accountB'); await fs.mkdir(otherRoot);
     await assert.rejects(f.service.status({ user: { directories: { root: otherRoot } } }, a.job.id), error => error.status === 404);
-    release(); assert.equal((await finish(f.service, f.request, a.job.id)).status, 'completed');
+    release(); const finished = await finish(f.service, f.request, a.job.id); assert.equal(finished.status, 'completed', finished.error);
 });
 test('cancellation prevents publishing a detached job result', async t => {
     let release; const hold = new Promise(resolve => release = resolve);

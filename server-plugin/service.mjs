@@ -1,3 +1,6 @@
+import { createProfileService, saveProfile } from './profile-service.mjs';
+import { validateProfileSnapshot } from './source-contract.mjs';
+import { normalizeSelection } from './runtime/source-selection.js';
 import { randomUUID } from 'node:crypto';
 import { runScene, decide } from './runtime/engine.js';
 import { PROVIDERS, importPlatforms, fingerprint } from './runtime/core.js';
@@ -31,21 +34,13 @@ function cleanConfig(raw) {
 function snapshotOf(raw, scope) {
     if (!record(raw) || !record(raw.source?.character) || !record(raw.source?.persona) || !Array.isArray(raw.history) || !raw.history.length || raw.history.length > 6 || !Array.isArray(raw.identity)) throw Object.assign(new Error('잘못된 장면 입력입니다.'), { status: 400 });
     if (Buffer.byteLength(JSON.stringify(raw)) > 2_000_000) throw Object.assign(new Error('장면 입력이 너무 큽니다.'), { status: 413 });
-    const source = { character: {}, persona: {} };
-    for (const key of ['name', 'description', 'personality']) {
-        source.character[key] = typeof raw.source.character[key] === 'string' ? raw.source.character[key] : '';
-        if (key !== 'personality') source.persona[key] = typeof raw.source.persona[key] === 'string' ? raw.source.persona[key] : '';
-    }
-    if (!source.character.description.trim() && !source.character.personality.trim()) throw new Error('캐릭터 시트 원문이 비어 있습니다.');
+    const profile = validateProfileSnapshot(raw, scope);
     const history = raw.history.map(item => {
         if (typeof item?.text !== 'string') throw new Error('장면 메시지를 읽을 수 없습니다.');
         return { name: String(item.name || ''), text: item.text };
     });
-    const profileKey = JSON.stringify([scope.character, scope.branch, source.persona.name, fingerprint(source.persona)]);
-    // Preserve the exact source shape used by capture for cache identities.
-    delete source.persona.personality;
-    if (raw.key !== fingerprint(raw.identity) || raw.sourceHash !== fingerprint(raw.source) || raw.profileKey !== profileKey) throw new Error('장면 식별자가 일치하지 않습니다. 새로고침 후 다시 생성해 주세요.');
-    return { source: raw.source, history, identity: raw.identity, key: raw.key, profileKey, sourceHash: raw.sourceHash };
+    if (raw.key !== fingerprint(raw.identity)) throw new Error('장면 식별자가 일치하지 않습니다.');
+    return { ...profile, history, identity: raw.identity, key: raw.key };
 }
 const keyStatuses = secrets => Object.fromEntries(Object.keys(PROVIDERS).map(provider => [provider, Boolean(secrets[provider])]));
 const publicJob = job => job ? { id: job.id, key: job.key, kind: job.kind || 'generation', platform: job.platform, status: job.status, phase: job.phase, error: job.error || '', createdAt: job.createdAt, updatedAt: job.updatedAt } : null;
@@ -53,6 +48,7 @@ const publicJob = job => job ? { id: job.id, key: job.key, kind: job.kind || 'ge
 export function createService({ generateFactory, fetchImpl = fetch, timeoutMs = 300000 } = {}) {
     const running = new Map();
     const runningScopes = new Map();
+    const profileService = createProfileService({ running, runningScopes, generateFactory, timeoutMs, publicJob });
     async function bootstrap(request, legacy) {
         const root = await rootFor(request);
         return serial(root, async () => {
@@ -93,7 +89,7 @@ export function createService({ generateFactory, fetchImpl = fetch, timeoutMs = 
                 await write(root, 'settings.json', state);
             }
             const secrets = await read(root, 'secrets.json', {});
-            return { ok: true, protocol: 4, revision: state.revision, settings: cleanConfig(state.settings), keyStatuses: keyStatuses(secrets), migratedLegacy: state.migratedLegacy === true, legacyAccepted: record(legacy) && !state.skippedLegacy && state.legacyHash === digest(JSON.stringify(legacy)), location: 'data/<account>/crowdlens/' };
+            return { ok: true, protocol: 5, revision: state.revision, settings: cleanConfig(state.settings), keyStatuses: keyStatuses(secrets), migratedLegacy: state.migratedLegacy === true, legacyAccepted: record(legacy) && !state.skippedLegacy && state.legacyHash === digest(JSON.stringify(legacy)), location: 'data/<account>/crowdlens/' };
         });
     }
     async function updateSettings(request, body) {
@@ -130,7 +126,7 @@ export function createService({ generateFactory, fetchImpl = fetch, timeoutMs = 
         const root = await rootFor(request), scope = scopeOf(rawScope);
         const [profiles, chat] = await Promise.all([read(root, profileFile(scope), { profiles: {} }), read(root, chatFile(scope), { results: {} })]);
         const job = chat.lastJob ? await getJob(root, chat.lastJob) : null;
-        return { ok: true, profiles: profiles.profiles, results: chat.results, job: publicJob(job) };
+        return { ok: true, profiles: profiles.profiles, sourceSelections: profiles.selections || {}, sourceSelectionRevisions: profiles.selectionRevisions || {}, results: chat.results, latestResultKey: chat.latestResultKey || Object.keys(chat.results).at(-1) || null, job: publicJob(job) };
     }
     async function clear(request, body) {
         const root = await rootFor(request), scope = scopeOf(body.scope);
@@ -143,7 +139,9 @@ export function createService({ generateFactory, fetchImpl = fetch, timeoutMs = 
                 const saved = await read(root, profileFile(scope), { profiles: {} });
                 delete saved.profiles[body.profileKey]; await write(root, profileFile(scope), saved);
             }
-            await write(root, chatFile(scope), { ...chat, results: {} });
+            if (body.key) { delete chat.results[body.key]; chat.latestResultKey = Object.keys(chat.results).at(-1) || null; }
+            else { chat.results = {}; chat.latestResultKey = null; }
+            await write(root, chatFile(scope), chat);
             return { ok: true };
         });
     }
@@ -154,6 +152,8 @@ export function createService({ generateFactory, fetchImpl = fetch, timeoutMs = 
             if (!state?.settings?.enabled) throw new Error('CrowdLens 사용을 먼저 켜 주세요.');
             if (body.revision !== state.revision) throw Object.assign(new Error('서버 설정이 변경되었습니다. 새로고침해 주세요.'), { status: 409 });
             state.settings = cleanConfig(state.settings);
+            const sourceRecord = await read(root, profileFile(scope), { profiles: {} });
+            if (sourceRecord.selections?.[snapshot.profileKey] && fingerprint(normalizeSelection(sourceRecord.selections[snapshot.profileKey])) !== snapshot.selectionHash) throw new Error('프로필 입력 선택이 변경되었습니다. 다시 불러와 주세요.');
             if (state.settings.selectionMode === 'manual' && !state.settings.selectedPlatforms.length) throw new Error('생성할 커뮤니티를 하나 이상 선택해 주세요.');
             const chat = await read(root, chatFile(scope), { results: {} });
             const previousId = chat.sceneJobs?.[snapshot.key] || chat.lastJob;
@@ -184,7 +184,7 @@ export function createService({ generateFactory, fetchImpl = fetch, timeoutMs = 
                 const generate = await generateFactory(request.user, config, controller.signal);
                 await phase('프로필 확인 및 연결 모델 판독');
                 const result = await runScene({ snapshot, settings, valid: () => !controller.signal.aborted,
-                    save: () => serial(root, () => write(root, profileFile(scope), { scope: { character: scope.character, branch: scope.branch }, profiles: settings.profiles })),
+                    save: () => saveProfile(root, scope, snapshot, settings.profiles[snapshot.profileKey]),
                     generate: async options => { await phase(options.systemPrompt.startsWith('Summarize') ? '사회적 프로필 판독' : '커뮤니티 반응 작성'); return generate(options); },
                     classify: async state => {
                         await phase('JEV 장면 판독');
@@ -199,7 +199,8 @@ export function createService({ generateFactory, fetchImpl = fetch, timeoutMs = 
                 controller.signal.throwIfAborted();
                 await serial(root, async () => {
                     const chat = await read(root, chatFile(scope), { results: {} });
-                    chat.results[snapshot.key] = { identity: JSON.stringify(snapshot.identity), result };
+                    chat.results[snapshot.key] = { identity: JSON.stringify(snapshot.identity), result, createdAt: new Date().toISOString() };
+                    chat.latestResultKey = snapshot.key;
                     Object.keys(chat.results).slice(0, Math.max(0, Object.keys(chat.results).length - 80)).forEach(k => delete chat.results[k]);
                     await write(root, chatFile(scope), chat);
                     job.status = 'completed'; job.phase = '완료'; job.updatedAt = new Date().toISOString();
@@ -271,7 +272,7 @@ export function createService({ generateFactory, fetchImpl = fetch, timeoutMs = 
         return { ok: true, job: publicJob(job) };
     }
     return {
-        bootstrap, updateSettings, saveKey, scopeData, clear, submit, translate,
+        bootstrap, updateSettings, saveKey, scopeData, clear, submit, translate, selectSources: profileService.select, submitProfile: profileService.submit,
         async status(request, id) { const root = await rootFor(request); return { ok: true, job: publicJob(await getJob(root, id)) }; },
         async cancel(request, id) { const root = await rootFor(request); await getJob(root, id); running.get(`${root}:${id}`)?.abort(); return { ok: true }; },
         async close() { for (const controller of running.values()) controller.abort(); },

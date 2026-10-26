@@ -1,5 +1,6 @@
-import { PROFILE_PROMPT, REACTION_PROMPT } from './prompts.js';
-import { PROVIDERS, GROUPS, parseJSON, profileOf, sceneQuestions, readDecisions, planFeed, manualPlans, postsOf, selectedPlatforms } from './core.js';
+import { ensureProfile } from './profile.js';
+import { REACTION_PROMPT } from './prompts.js';
+import { PROVIDERS, GROUPS, parseJSON, sceneQuestions, readDecisions, planFeed, manualPlans, postsOf, selectedPlatforms } from './core.js';
 export { capture } from './snapshot.js';
 
 export async function decide(settings, state, signal, headers, transport = fetch) {
@@ -52,14 +53,7 @@ export async function runScene({ snapshot, settings, generate, classify, valid, 
     const outputTokens = Math.min(32768, Math.max(8000, Number(settings.outputTokens) || 8192));
     const guard = () => { if (!valid()) throw new Error('채팅 또는 장면이 바뀌어 생성을 취소했습니다.'); };
     guard();
-    let record = settings.profiles[snapshot.profileKey];
-    if (!record || record.sourceHash !== snapshot.sourceHash || record.language !== 'en') {
-        const result = await generate({ systemPrompt: PROFILE_PROMPT, prompt: JSON.stringify(snapshot.source), responseLength: outputTokens, trimNames: false });
-        guard();
-        record = { sourceHash: snapshot.sourceHash, language: 'en', profile: profileOf(parseJSON(result)) };
-        settings.profiles[snapshot.profileKey] = record;
-        await save();
-    }
+    const record = await ensureProfile({ snapshot, settings, generate, valid, save });
     const manual = settings.selectionMode === 'manual';
     let plans;
     if (manual) plans = manualPlans(platforms, count, random);
