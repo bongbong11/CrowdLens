@@ -1,5 +1,5 @@
 import { PROFILE_PROMPT, REACTION_PROMPT } from './prompts.js';
-import { PROVIDERS, parseJSON, profileOf, sceneQuestions, readDecisions, planFeed, postsOf, selectedPlatforms } from './core.js';
+import { PROVIDERS, GROUPS, parseJSON, profileOf, sceneQuestions, readDecisions, planFeed, manualPlans, postsOf, selectedPlatforms } from './core.js';
 export { capture } from './snapshot.js';
 
 export async function decide(settings, state, signal, headers, transport = fetch) {
@@ -34,29 +34,47 @@ export async function decide(settings, state, signal, headers, transport = fetch
     return readDecisions(data, questions);
 }
 
+export function reactionInput(snapshot, profiles, plans, selectionMode, outputLanguage = 'en') {
+    const instructions = [], byText = new Map();
+    const ref = text => {
+        if (!text) return null;
+        if (!byText.has(text)) { const id = `instruction-${instructions.length + 1}`; byText.set(text, id); instructions.push({ id, text }); }
+        return byText.get(text);
+    };
+    const platforms = plans.map(({ prompt, sharedPrompt, outputLanguage: language, voices, ...plan }) => ({ ...plan, voices: voices.map(({ region, culture, language, personality }) => ({ region, culture, voice: `${language}; ${personality}` })), promptRef: ref(prompt), sharedPromptRef: ref(sharedPrompt) }));
+    return { profiles, scene: snapshot.history.at(-1), history: snapshot.history.slice(0, -1), selectionMode, outputLanguage, groups: GROUPS, instructions, platforms };
+}
 export async function runScene({ snapshot, settings, generate, classify, valid, save, random }) {
-    const platforms = selectedPlatforms(settings);
+    const outputLanguage = settings.outputLanguage === 'ko' ? 'ko' : 'en';
+    const count = { low: 3, medium: 6, high: 10 }[settings.commentVolume] || 6;
+    const platforms = selectedPlatforms(settings).map(p => ({ ...p, moderation: settings.underground ? 'unmoderated' : 'normal', outputLanguage }));
     if (!platforms.length) throw new Error('생성할 커뮤니티를 하나 이상 선택해 주세요.');
     const outputTokens = Math.min(32768, Math.max(8000, Number(settings.outputTokens) || 8192));
     const guard = () => { if (!valid()) throw new Error('채팅 또는 장면이 바뀌어 생성을 취소했습니다.'); };
     guard();
     let record = settings.profiles[snapshot.profileKey];
-    if (!record || record.sourceHash !== snapshot.sourceHash) {
+    if (!record || record.sourceHash !== snapshot.sourceHash || record.language !== 'en') {
         const result = await generate({ systemPrompt: PROFILE_PROMPT, prompt: JSON.stringify(snapshot.source), responseLength: outputTokens, trimNames: false });
         guard();
-        record = { sourceHash: snapshot.sourceHash, profile: profileOf(parseJSON(result)) };
+        record = { sourceHash: snapshot.sourceHash, language: 'en', profile: profileOf(parseJSON(result)) };
         settings.profiles[snapshot.profileKey] = record;
         await save();
     }
-    const scores = await classify({ profiles: record.profile, scene: snapshot.history.at(-1), history: snapshot.history.slice(0, -1) });
-    guard();
-    const plans = planFeed(platforms, scores, 8, random, settings.selectionMode === 'manual');
+    const manual = settings.selectionMode === 'manual';
+    let plans;
+    if (manual) plans = manualPlans(platforms, count, random);
+    else {
+        const scores = await classify({ profiles: record.profile, scene: snapshot.history.at(-1), history: snapshot.history.slice(0, -1) });
+        guard(); plans = planFeed(platforms, scores, count, random);
+    }
     if (!plans.length) return { feeds: [], reason: '이 장면에서 자연스럽게 반응할 공개 경로나 집단이 없습니다.' };
     const result = await generate({
         systemPrompt: REACTION_PROMPT,
-        prompt: JSON.stringify({ profiles: record.profile, scene: snapshot.history.at(-1), history: snapshot.history.slice(0, -1), platforms: plans }),
+        prompt: JSON.stringify(reactionInput(snapshot, record.profile, plans, manual ? 'manual' : 'auto', outputLanguage)),
         responseLength: outputTokens, trimNames: false,
     });
     guard();
-    return { feeds: postsOf(parseJSON(result), plans), reason: '' };
+    const parsed = parseJSON(result);
+    if (manual && Array.isArray(parsed.feeds) && !parsed.feeds.length && typeof parsed.reason === 'string' && parsed.reason.trim()) return { feeds: [], reason: parsed.reason.trim().slice(0, 500) };
+    return { feeds: postsOf(parsed, plans), reason: '' };
 }

@@ -1,16 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
-import { PROVIDERS, DEFAULT_PLATFORMS, GROUPS, importPlatforms, parseJSON, planFeed, readDecisions, sceneQuestions, postsOf, selectedPlatforms } from '../src/core.js';
-import { capture, decide, runScene } from '../src/engine.js';
+import { PROVIDERS, GROUPS, importPlatforms, parseJSON, planFeed, readDecisions, sceneQuestions, postsOf, selectedPlatforms } from '../src/core.js';
+import { capture, decide, runScene, reactionInput } from '../src/engine.js';
 import { readSheets } from '../src/sheets.js';
 
-const profile = { name: 'Hunter', occupation: '선수', recognition: '스포츠 공인', reputation: '차분함', acquaintanceView: '장난스러움', publicInfo: '선수 경력' };
-const profiles = { character: profile, persona: { ...profile, name: 'Jamie', occupation: '일반 회사원', recognition: '일반인' } };
+const DEFAULT_PLATFORMS = importPlatforms(JSON.parse(readFileSync(new URL('../prompts/community-reactions.json', import.meta.url), 'utf8')));
+const profile = { name: 'Hunter', occupation: 'Professional player', recognition: 'Sports public figure', reputation: 'Calm', acquaintanceView: 'Playful', publicInfo: 'Playing career' };
+const profiles = { character: profile, persona: { ...profile, name: 'Jamie', occupation: 'Office worker', recognition: 'Private person' } };
 const config = () => ({ branch: 'main', provider: 'typesafe', apiKey: 'test-only', platforms: [DEFAULT_PLATFORMS[0]], profiles: {}, outputTokens: 8192 });
 const context = () => ({ characterId: 0, characters: [{ avatar: 'hunter.png', name: 'Hunter', description: '선수. 공개된 선수 경력. 비밀: 향수 수집.' }], chatId: 'chat1', name1: 'Jamie', powerUserSettings: { persona_description: '회사원' }, chat: [{ name: 'Jamie', is_user: true, mes: '경기 인터뷰를 볼까?' }, { name: 'Hunter', mes: '공개 인터뷰가 방송됐다.', swipe_id: 0 }] });
 const scores = () => ({ visible: .95, p0: .9, ...Object.fromEntries(Object.keys(GROUPS).map(g => [`p0_${g}`, g === 'public' ? .9 : .1])) });
-const modelFeed = () => JSON.stringify({ feeds: [{ platform: 'twitch', posts: Array.from({ length: 8 }, (_, i) => ({ author: `user${i}`, group: 'public', region: 'us', body: '인터뷰 봤다.' })) }] });
+const modelFeed = (count = 8) => JSON.stringify({ feeds: [{ platform: 'twitch', posts: Array.from({ length: count }, (_, i) => ({ author: `user${i}`, group: 'public', region: 'us', body: '인터뷰 봤다.' })) }] });
 
 test('uploaded lorebook imports 9 platforms and shares archetypes without SMS or a fake archetype platform', { skip: !existsSync(new URL('../prompts/community-reactions.json', import.meta.url)) }, () => {
     const source = JSON.parse(readFileSync(new URL('../prompts/community-reactions.json', import.meta.url), 'utf8'));
@@ -20,6 +21,35 @@ test('uploaded lorebook imports 9 platforms and shares archetypes without SMS or
     assert.ok(rows.every(p => p.sharedPrompt.includes('User Archetypes')));
     assert.equal(rows.find(p => p.id === 'twitch').style, 'live');
     assert.equal(rows.find(p => p.id === '4chan').style, 'anon');
+    const entries = Object.values(source.entries).filter(e => !e.constant && !/archetypes|sms/i.test(e.comment || ''));
+    assert.deepEqual(rows.map(p => p.prompt), entries.map(e => e.content));
+    assert.ok(rows.every(p => p.sharedPrompt === Object.values(source.entries).find(e => e.constant).content));
+});
+test('original common and platform prompts are injected once without rewrites', () => {
+    const original = importPlatforms(JSON.parse(readFileSync(new URL('../prompts/community-reactions.json', import.meta.url), 'utf8')));
+    const plans = original.map(p => ({ ...p, count: 6, voices: [] }));
+    const input = reactionInput(capture(context(), config(), 1), profiles, plans, 'manual', 'en');
+    assert.equal(input.instructions.length, 10);
+    assert.equal(input.instructions.filter(p => p.text === original[0].sharedPrompt).length, 1);
+    for (const p of input.platforms) {
+        const source = original.find(o => o.id === p.id);
+        assert.equal(input.instructions.find(i => i.id === p.promptRef).text, source.prompt);
+        assert.equal(input.instructions.find(i => i.id === p.sharedPromptRef).text, source.sharedPrompt);
+        assert.equal(p.prompt, undefined); assert.equal(p.sharedPrompt, undefined);
+    }
+});
+test('volume, output language and global underground apply to every manual platform', async () => {
+    for (const [commentVolume, count] of [['low', 3], ['medium', 6], ['high', 10]]) for (const outputLanguage of ['en', 'ko']) {
+        const s = { ...config(), selectionMode: 'manual', selectedPlatforms: ['twitch'], underground: true, commentVolume, outputLanguage };
+        let payload;
+        const result = await runScene({ snapshot: capture(context(), s, 1), settings: s, valid: () => true, save() {}, classify: () => assert.fail('JEV in manual'),
+            generate: async options => { if (options.systemPrompt.startsWith('Summarize')) return JSON.stringify(profiles); payload = JSON.parse(options.prompt); return modelFeed(count); } });
+        assert.equal(payload.outputLanguage, outputLanguage);
+        assert.ok(payload.platforms.every(p => p.moderation === 'unmoderated'));
+        assert.equal(result.feeds[0].posts.length, count);
+        assert.equal(result.feeds[0].language, outputLanguage);
+        assert.equal(Object.values(s.profiles)[0].language, 'en');
+    }
 });
 test('imports reject duplicate IDs, missing prompts and empty data', () => {
     for (const bad of [[], { platforms: [{ id: 'a', name: 'A' }] }, [{ id: 'a', name: 'A', prompt: 'x' }, { id: 'a', name: 'B', prompt: 'y' }]]) assert.throws(() => importPlatforms(bad));
@@ -41,14 +71,14 @@ test('weighted sampling uses only eligible groups and exact count', () => {
     const varied = planFeed([DEFAULT_PLATFORMS[0]], { ...scores(), p0_fans: .9 }, 8, () => .9);
     assert.equal(Object.values(varied[0].slots).reduce((a, b) => a + b), 8);
 });
-test('manual selection excludes unchecked communities and skips only platform suitability', async () => {
+test('manual selection uses checked communities and never calls JEV', async () => {
     const s = { ...config(), platforms: DEFAULT_PLATFORMS, selectionMode: 'manual', selectedPlatforms: ['twitch'] };
     assert.deepEqual(selectedPlatforms(s).map(p => p.id), ['twitch']);
     const q = sceneQuestions(selectedPlatforms(s), true);
     assert.equal(q.p0, undefined); assert.ok(q.visible); assert.ok(q.p0_public); assert.equal(q.p1_public, undefined);
     const manualScores = { ...scores(), p0: 0 };
     const result = await runScene({ snapshot: capture(context(), s, 1), settings: s, valid: () => true, save() {}, random: () => .5,
-        generate: async options => options.systemPrompt.startsWith('Summarize') ? JSON.stringify(profiles) : modelFeed(), classify: async () => manualScores });
+        generate: async options => options.systemPrompt.startsWith('Summarize') ? JSON.stringify(profiles) : modelFeed(6), classify: async () => assert.fail('Manual mode called JEV') });
     assert.deepEqual(result.feeds.map(f => f.id), ['twitch']);
     assert.deepEqual(planFeed(selectedPlatforms(s), { ...manualScores, visible: 0 }, 8, Math.random, true), []);
     await assert.rejects(runScene({ settings: { ...s, selectedPlatforms: [] } }), /하나 이상/);
@@ -104,8 +134,8 @@ test('scene identity separates chat, swipe, edits, branch and persona', () => {
 test('first generation builds profiles, judges, writes feeds; second reuses profile; originals immutable', async () => {
     const c = context(), before = JSON.stringify(c), s = config(), calls = [];
     const run = () => runScene({ snapshot: capture(c, s, 1), settings: s, valid: () => true, save() {}, random: () => .5,
-        generate: async options => { calls.push(options); return options.systemPrompt.startsWith('Summarize') ? JSON.stringify(profiles) : modelFeed(); }, classify: async () => scores() });
-    assert.equal((await run()).feeds[0].posts.length, 8);
+        generate: async options => { calls.push(options); return options.systemPrompt.startsWith('Summarize') ? JSON.stringify(profiles) : modelFeed(6); }, classify: async () => scores() });
+    assert.equal((await run()).feeds[0].posts.length, 6);
     assert.equal(calls.length, 2);
     await run(); assert.equal(calls.length, 3);
     assert.ok(calls.every(c => c.responseLength >= 8000));
@@ -122,7 +152,7 @@ test('cancellation after profile response prevents persistence, JEV and feeds', 
     assert.deepEqual(s.profiles, {});
 });
 test('no observable event skips reaction model entirely', async () => {
-    const s = config(), snap = capture(context(), s, 1); s.profiles[snap.profileKey] = { sourceHash: snap.sourceHash, profile: profiles };
+    const s = config(), snap = capture(context(), s, 1); s.profiles[snap.profileKey] = { sourceHash: snap.sourceHash, language: 'en', profile: profiles };
     const result = await runScene({ snapshot: snap, settings: s, valid: () => true, save() {}, generate: () => assert.fail('unnecessary generation'), classify: async () => ({ visible: .1 }) });
     assert.deepEqual(result.feeds, []);
 });

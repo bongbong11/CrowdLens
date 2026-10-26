@@ -52,11 +52,13 @@ export async function showSettings({ context, state: s, server, status, keyStatu
     const choices = node('div', undefined, 'cl-community-grid');
     const selectionHint = node('p', '', 'cl-hint');
     const modeButtons = [];
+    let jevPanel = null;
     function updateChoices() {
         const manual = s.selectionMode === 'manual';
         modeButtons.forEach(([id, button]) => button.setAttribute('aria-pressed', String(s.selectionMode === id)));
         choices.hidden = !manual;
-        selectionHint.textContent = manual ? `${s.selectedPlatforms.length}개 선택 · 장면의 공개 정보와 반응 가능한 집단은 확인합니다. 알려질 경로가 없으면 생성하지 않아요.` : '생성 버튼을 누를 때 장면에 어울리는 커뮤니티와 반응 집단을 판독합니다.';
+        if (jevPanel) jevPanel.hidden = manual;
+        selectionHint.textContent = manual ? `${s.selectedPlatforms.length}개 선택 · 연결 모델만 사용합니다. JEV 호출과 JEV 키가 필요하지 않아요.` : '생성 버튼을 누를 때 JEV가 어울리는 커뮤니티와 반응 집단을 판독합니다.';
         choices.replaceChildren();
         for (const platform of s.platforms) {
             const label = node('label', undefined, 'cl-community-choice');
@@ -69,8 +71,14 @@ export async function showSettings({ context, state: s, server, status, keyStatu
         const button = action(label, () => { s.selectionMode = id; updateChoices(); void changed(); }); modeButtons.push([id, button]); modes.append(button);
     }
     const sourceNotice = node('p', '', 'cl-hint');
-    const updateSource = () => sourceNotice.textContent = `${s.platforms.length}개 커뮤니티 · ${s.promptSource || '기본 안내 프롬프트 (원문 로어북은 아직 가져오지 않았어요)'}`;
+    const updateSource = () => sourceNotice.textContent = `${s.platforms.length}개 커뮤니티 · 기반 파일: ${s.promptSource || '기본 안내 프롬프트 (원문 로어북은 아직 가져오지 않았어요)'}`;
     communities.append(modes, choices, selectionHint, sourceNotice, row(action('로어북 가져오기', () => file.click()))); updateChoices(); updateSource();
+    const language = node('select'); language.append(option('en', 'English 원문'), option('ko', '한국어')); language.value = s.outputLanguage || 'en'; field(communities, '출력 언어', language);
+    language.addEventListener('change', () => { s.outputLanguage = language.value; void changed(); });
+    const volume = node('select'); volume.append(option('low', '적게 · 커뮤니티당 3개'), option('medium', '중간 · 커뮤니티당 6개'), option('high', '많이 · 커뮤니티당 10개')); volume.value = s.commentVolume || 'medium'; field(communities, '댓글 양', volume);
+    volume.addEventListener('change', () => { s.commentVolume = volume.value; void changed(); });
+    const underground = node('input'); underground.type = 'checkbox'; underground.checked = s.underground === true; field(communities, '음지 커뮤니티 모드', underground, '선택한 커뮤니티 전체에 적용 · 관리자 삭제 표시 없음 · 거친 성격의 비중 증가');
+    underground.addEventListener('change', () => { s.underground = underground.checked; void changed(); });
 
     const branchBody = section(scroll, '프로필 브랜치', '다른 설정의 사회적 프로필을 쓰고 싶을 때 추가하세요.');
     const branch = node('select'); branch.setAttribute('aria-label', '브랜치');
@@ -103,8 +111,10 @@ export async function showSettings({ context, state: s, server, status, keyStatu
     const limit = node('input'); limit.type = 'number'; limit.min = '8000'; limit.max = '32768'; limit.step = '1'; limit.value = s.outputTokens;
     field(connection, '최대 출력 토큰', limit, '8,000~32,768 · 기본 8,192');
     limit.addEventListener('change', () => { s.outputTokens = Math.min(32768, Math.max(8000, Math.trunc(Number(limit.value) || 8192))); limit.value = s.outputTokens; void changed(); });
-    const provider = node('select'); for (const [id, p] of Object.entries(PROVIDERS)) provider.append(option(id, p.name)); provider.value = s.provider; field(connection, 'JEV 연결 제공자', provider);
-    const key = node('input'); key.type = 'password'; key.autocomplete = 'off'; key.placeholder = '새 키를 입력할 때만 작성'; field(connection, 'JEV API 키', key);
+    jevPanel = node('div', undefined, 'cl-jev-settings'); jevPanel.hidden = s.selectionMode === 'manual'; connection.append(jevPanel);
+    jevPanel.append(node('p', '자동 선택에서만 사용합니다. 직접 체크에서는 JEV에 접속하지 않습니다.', 'cl-hint'));
+    const provider = node('select'); for (const [id, p] of Object.entries(PROVIDERS)) provider.append(option(id, p.name)); provider.value = s.provider; field(jevPanel, 'JEV 연결 제공자', provider);
+    const key = node('input'); key.type = 'password'; key.autocomplete = 'off'; key.placeholder = '새 키를 입력할 때만 작성'; field(jevPanel, 'JEV API 키', key);
     const providerHint = node('p', '', 'cl-hint');
     const drafts = { typesafe: '', nanogpt: '' };
     const updateProvider = () => { key.value = drafts[s.provider]; providerHint.textContent = `${keyStatuses[s.provider] ? '서버에 키 저장됨' : '저장된 키 없음'} · ${PROVIDERS[s.provider].model}${s.provider === 'nanogpt' ? ' · Billing: Subscription only 사용' : ''}`; };
@@ -117,33 +127,32 @@ export async function showSettings({ context, state: s, server, status, keyStatu
             keyStatuses = data.keyStatuses; onKeys(keyStatuses); drafts[id] = ''; updateProvider();
         } catch (error) { providerHint.textContent = error.message; }
     };
-    connection.append(row(action('키 저장', () => saveKey(false), true), action('키 삭제', () => saveKey(true))), providerHint); updateProvider();
+    jevPanel.append(row(action('키 저장', () => saveKey(false), true), action('키 삭제', () => saveKey(true))), providerHint); updateProvider();
 
-    const editor = section(scroll, '커뮤니티 프롬프트 편집', '커뮤니티를 골라 지침을 확인하고 수정하세요. 영어 지침을 권장하며, 반응은 한국어로 출력됩니다.', true);
+    const editor = section(scroll, '커뮤니티 프롬프트 편집', '원본 로어북 본문을 그대로 확인하고 수정하는 곳입니다. 출력 언어는 위 설정을 따릅니다.', true);
     const platformSelect = node('select'); field(editor, '편집할 커뮤니티', platformSelect);
-    const underground = node('input'); underground.type = 'checkbox'; field(editor, '음지 커뮤니티', underground, '관리자 삭제 표시 없음 · 거친 성격의 출현 비중 증가');
     const prompt = node('textarea'); prompt.rows = 10; prompt.maxLength = 20000; prompt.spellcheck = false; field(editor, '플랫폼 프롬프트', prompt);
-    const commonDetails = section(editor, '함께 적용되는 공통 지침', '이 커뮤니티에 적용할 공통 성격·말투 지침입니다. 다른 커뮤니티는 각각 보관합니다.', true);
+    const commonDetails = section(editor, '함께 적용되는 공통 지침', '이 커뮤니티에 적용할 공통 성격·말투 지침입니다. 같은 공통 지침은 생성 요청에 한 번만 넣습니다.', true);
     const shared = node('textarea'); shared.rows = 7; shared.maxLength = 12000; shared.spellcheck = false; field(commonDetails, '공통 프롬프트', shared);
     const editStatus = node('p', '', 'cl-hint'); editStatus.setAttribute('role', 'status');
     const draftsById = new Map(); let editingId = '';
-    const keepDraft = () => { if (editingId) draftsById.set(editingId, { prompt: prompt.value, sharedPrompt: shared.value, moderation: underground.checked ? 'unmoderated' : 'normal' }); };
+    const keepDraft = () => { if (editingId) draftsById.set(editingId, { prompt: prompt.value, sharedPrompt: shared.value }); };
     const loadDraft = () => {
         const platform = s.platforms.find(p => p.id === platformSelect.value);
         editingId = platform?.id || ''; const draft = draftsById.get(editingId) || platform;
-        prompt.value = draft?.prompt || ''; shared.value = draft?.sharedPrompt || ''; underground.checked = draft?.moderation === 'unmoderated'; editStatus.textContent = '편집 후 저장 버튼을 눌러 주세요.';
+        prompt.value = draft?.prompt || ''; shared.value = draft?.sharedPrompt || ''; editStatus.textContent = `본문 ${prompt.value.length.toLocaleString()}자 · 공통 ${shared.value.length.toLocaleString()}자. 편집 후 저장 버튼을 눌러 주세요.`;
     };
     const populateEditor = () => { platformSelect.replaceChildren(...s.platforms.map(p => option(p.id, p.name))); loadDraft(); };
     platformSelect.addEventListener('change', () => { keepDraft(); loadDraft(); }); populateEditor();
     editor.append(row(action('이 커뮤니티 저장', async () => {
         if (!prompt.value.trim()) { editStatus.textContent = '플랫폼 프롬프트를 입력해 주세요.'; return; }
         const platform = s.platforms.find(p => p.id === editingId);
-        platform.prompt = prompt.value.trim(); platform.sharedPrompt = shared.value.trim(); platform.moderation = underground.checked ? 'unmoderated' : 'normal'; keepDraft();
+        platform.prompt = prompt.value; platform.sharedPrompt = shared.value; keepDraft();
         await changed(); editStatus.textContent = server.failure ? server.failure.message : `${platform.name} 프롬프트를 저장했어요. 다음 생성부터 적용됩니다.`;
     }, true), action('편집 되돌리기', () => { draftsById.delete(editingId); loadDraft(); })), editStatus);
     const importBody = section(editor, 'JSON 파일 가져오기', '여러 파일을 함께 선택할 수 있어요. 기존 목록에 합치며, 같은 플랫폼 ID는 새 파일 내용으로 갱신합니다. SMS는 제외됩니다.', true);
     const file = node('input'); file.type = 'file'; file.multiple = true; file.accept = '.json,application/json'; field(importBody, '프롬프트 파일', file);
-    const importedNotice = node('p', `${s.platforms.length}개 커뮤니티 · ${s.promptSource || '기본 예시 프롬프트'}`, 'cl-hint'); importBody.append(importedNotice);
+    const importedNotice = node('p', `${s.platforms.length}개 커뮤니티 · 기반 파일: ${s.promptSource || '기본 예시 프롬프트'}`, 'cl-hint'); importBody.append(importedNotice);
     file.addEventListener('change', async () => {
         try {
             const files = [...file.files]; if (!files.length) return;
@@ -161,8 +170,9 @@ export async function showSettings({ context, state: s, server, status, keyStatu
     function showProfile() {
         try {
             const snapshot = capture(context, s, context.chat.findLastIndex(m => !m.is_user && !m.is_system));
-            const saved = s.profiles[snapshot.profileKey]?.profile;
-            profile.textContent = saved ? Object.entries(saved).map(([who, p]) => `${who === 'character' ? '캐릭터' : '유저'} · ${p.name}\n직업: ${p.occupation}\n인지도: ${p.recognition}\n대외평판: ${p.reputation}\n지인 관점: ${p.acquaintanceView}\n공개정보: ${p.publicInfo}`).join('\n\n') : '첫 반응을 만들 때 프로필도 함께 판독합니다.';
+            const record = s.profiles[snapshot.profileKey];
+            const saved = record?.language === 'en' ? record.profile : null;
+            profile.textContent = saved ? Object.entries(saved).map(([who, p]) => `${who === 'character' ? '캐릭터' : '유저'} · ${p.name}\n직업: ${p.occupation}\n인지도: ${p.recognition}\n대외평판: ${p.reputation}\n지인 관점: ${p.acquaintanceView}\n공개정보: ${p.publicInfo}`).join('\n\n') : '다음 수동 반응 생성 때 영문 사회적 프로필을 판독·저장합니다.';
         } catch (error) { profile.textContent = error.message; }
     }
     profileBody.append(profile, row(action('프로필 다시 판독하고 생성', async () => { try { await onReprofile(); showProfile(); } catch (error) { feedback.textContent = error.message; } }))); showProfile();

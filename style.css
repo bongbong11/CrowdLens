@@ -127,3 +127,5 @@
 @media(max-height:500px) { .cl-settings { height: calc(100dvh - 100px); min-height: 120px; } .cl-settings-head { padding-bottom: 6px; } .cl-settings-footer { padding-top: 6px; } }
 
 .cl-removed { opacity: .55; font-style: italic; }
+.cl-language-tools { padding: 8px 12px; border-bottom: 1px solid #8d91ad33; }
+.crowdlens .cl-language-tools [aria-pressed=true] { background: #8a75df; color: white; }

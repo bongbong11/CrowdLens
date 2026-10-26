@@ -10,47 +10,7 @@ export const GROUPS = {
     public: 'ordinary users who have encountered the publicly available information',
     critics: 'critical users with plausible access to this information',
 };
-export const LEGACY_DEFAULT_PLATFORMS = [
-    { id: 'x', name: 'X', style: 'microblog', prompt: 'Short posts, quote reactions, and varied voices. Use hashtags only when appropriate.' },
-    { id: 'instagram', name: 'Instagram', style: 'photo', prompt: 'Short comments on photos or public posts. Vary familiarity according to the relationship.' },
-    { id: 'reddit', name: 'Reddit', style: 'forum', prompt: 'Topic-based community post titles and comments. Mix opinions, counterarguments, and conversational replies.' },
-    { id: 'community', name: '커뮤니티', style: 'board', prompt: 'Anonymous board titles and comments. Include niche perspectives and disagreements rather than unanimous opinions.' },
-];
-// Original built-in descriptions; the user's uploaded lorebook stays private.
-export const DEFAULT_PLATFORMS = [
-    { id: 'twitch', name: 'Twitch Chat', style: 'live', prompt: 'Write a fast livestream chat reacting to the current visible moment. Mix short messages, interruptions, recognizable emotes and individual personalities; avoid long essays.' },
-    { id: 'reddit', name: 'Reddit', style: 'forum', prompt: 'Write a topic-specific forum thread with a concise title and conversational replies. Include different viewpoints, tangents and individual levels of investment.' },
-    { id: 'twitter', name: 'X / Twitter', style: 'microblog', prompt: 'Write brief public posts, quote-post remarks and reply chains. Mix sincere reactions with jokes, criticism and context-specific memes.' },
-    { id: 'discord', name: 'Discord', style: 'chat', prompt: 'Write a casual channel conversation among users who plausibly share this information. Use varied message lengths, familiar banter and replies.' },
-    { id: 'youtube', name: 'YouTube', style: 'video', prompt: 'Write comments beneath a relevant public video. Mix reactions to particular moments, short jokes, observations and argumentative reply chains.' },
-    { id: 'ao3', name: 'AO3', style: 'archive', prompt: 'Write archive-style reader comments about a relevant fanwork or fandom discussion only when the scene supports it. Include distinct reader voices and interpretations.' },
-    { id: 'instagram', name: 'Instagram', style: 'photo', prompt: 'Write comments beneath a relevant public photo or short post. Vary familiarity, attention, humor and tone according to each commenter and relationship.' },
-    { id: 'tiktok', name: 'TikTok', style: 'shortvideo', prompt: 'Write quick comments beneath a relevant public short video. Mix specific visual observations, local meme habits, informal jokes and conversational replies.' },
-    { id: '4chan', name: '4chan / Anon', style: 'anon', moderation: 'unmoderated', prompt: 'Write an anonymous imageboard thread with numbered replies, occasional greentext and chaotic individual voices. Include crude shitposting, harsh mockery and petty arguments where appropriate. This fictional space has no moderator deletion notices.' },
-];
-
-export function upgradeCatalog(raw = {}, offered = {}) {
-    const saved = raw && typeof raw === 'object' ? raw : {};
-    const supplied = Array.isArray(offered?.platforms) ? importPlatforms(offered.platforms) : null;
-    const fullBundle = supplied && offered.promptSource && DEFAULT_PLATFORMS.every(p => supplied.some(q => q.id === p.id));
-    const old = Array.isArray(saved.platforms) ? saved.platforms : [];
-    const legacyFour = old.length === 4 && LEGACY_DEFAULT_PLATFORMS.every(p => old.some(q => q.id === p.id));
-    const adoptBundle = fullBundle && !saved.promptSource && old.every(p => [...DEFAULT_PLATFORMS, ...LEGACY_DEFAULT_PLATFORMS].some(q => q.id === p.id));
-    if (saved.promptSource || (!legacyFour && !adoptBundle)) return { ...saved, catalogVersion: 1 };
-    const platforms = structuredClone(fullBundle ? supplied : DEFAULT_PLATFORMS);
-    for (const platform of old) {
-        const builtin = (legacyFour ? LEGACY_DEFAULT_PLATFORMS : DEFAULT_PLATFORMS).find(p => p.id === platform.id);
-        const customized = !builtin || ['name', 'style', 'prompt'].some(key => platform[key] !== builtin[key]) || Boolean(platform.sharedPrompt) || (platform.moderation === 'unmoderated' && builtin.moderation !== 'unmoderated');
-        if (!customized) continue;
-        const id = platform.id === 'x' ? 'twitter' : platform.id;
-        const replacement = { ...platform, id }, index = platforms.findIndex(p => p.id === id);
-        if (index < 0) platforms.push(replacement); else platforms[index] = replacement;
-    }
-    const selectedPlatforms = saved.selectionMode === 'manual' && Array.isArray(saved.selectedPlatforms)
-        ? saved.selectedPlatforms.map(id => id === 'x' ? 'twitter' : id).filter(id => platforms.some(p => p.id === id))
-        : platforms.map(p => p.id);
-    return { ...saved, catalogVersion: 1, platforms, selectedPlatforms, ...(fullBundle ? { promptSource: offered.promptSource } : {}) };
-}
+// The server loads platform instructions exclusively from the original lorebook or saved user edits.
 const text = (v, max = 600) => typeof v === 'string' ? v.trim().slice(0, max) : '';
 const isSms = p => /^(sms|text[-_ ]?messages?)$/i.test(String(p?.id || '')) || /\bsms\b|문자|text messaging/i.test(String(p?.name || ''));
 export function parseJSON(raw) {
@@ -86,9 +46,10 @@ export function importPlatforms(raw) {
         const id = /^[a-z0-9_-]{1,40}$/i.test(p.id) ? p.id : `platform-${fingerprint(p.name || i)}`;
         if (ids.has(id)) throw new Error('플랫폼 ID가 중복됩니다.');
         ids.add(id);
-        const row = { id, name: text(p.name, 80), prompt: text(p.prompt, 20000), sharedPrompt: text(p.sharedPrompt, 12000), style: ['microblog', 'photo', 'forum', 'board', 'live', 'chat', 'video', 'archive', 'shortvideo', 'anon'].includes(p.style) ? p.style : 'board' };
+        if ((p.prompt?.length || 0) > 20000 || (p.sharedPrompt?.length || 0) > 12000) throw new Error('프롬프트가 허용된 길이를 넘었습니다. 본문 20,000자·공통 지침 12,000자까지 저장할 수 있습니다.');
+        const row = { id, name: text(p.name, 80), prompt: typeof p.prompt === 'string' ? p.prompt : '', sharedPrompt: typeof p.sharedPrompt === 'string' ? p.sharedPrompt : '', style: ['microblog', 'photo', 'forum', 'board', 'live', 'chat', 'video', 'archive', 'shortvideo', 'anon'].includes(p.style) ? p.style : 'board' };
         row.moderation = p.moderation === 'unmoderated' || (p.moderation !== 'normal' && row.style === 'anon') ? 'unmoderated' : 'normal';
-        if (!row.name || !row.prompt) throw new Error('각 플랫폼에 name과 prompt가 필요합니다.');
+        if (!row.name || !row.prompt.trim()) throw new Error('각 플랫폼에 name과 prompt가 필요합니다.');
         return row;
     });
 }
@@ -179,23 +140,29 @@ export function planFeed(platforms, scores, count = 8, random = Math.random, man
         return [{ ...platform, moderation: platform.moderation || (platform.style === 'anon' ? 'unmoderated' : 'normal'), slots, voices: voiceCast(platform, count, random) }];
     });
 }
+export function manualPlans(platforms, count = 8, random = Math.random) {
+    return platforms.map(platform => ({ ...platform, count, voices: voiceCast(platform, count, random) }));
+}
 export function postsOf(raw, plans) {
     if (!Array.isArray(raw?.feeds)) throw new Error('반응 JSON에 feeds가 없습니다.');
     return plans.map(plan => {
         const feed = raw.feeds.find(f => f.platform === plan.id);
         const culture = ['korean', 'international'].includes(feed?.culture) ? feed.culture : plan.id === 'community' ? 'korean' : 'international';
-        const remaining = { ...plan.slots };
+        const remaining = plan.slots ? { ...plan.slots } : null;
         const posts = (Array.isArray(feed?.posts) ? feed.posts : []).slice(0, 32).map((post, index) => {
-            if (!(remaining[post.group] > 0)) throw new Error('허용되지 않은 집단 또는 반응 수입니다.');
-            remaining[post.group]--;
+            if (remaining) {
+                if (!(remaining[post.group] > 0)) throw new Error('허용되지 않은 집단 또는 반응 수입니다.');
+                remaining[post.group]--;
+            } else if (!Object.hasOwn(GROUPS, post.group)) throw new Error('허용되지 않은 반응 집단입니다.');
             const removed = post.removed === true && plan.moderation !== 'unmoderated';
             const body = removed ? '관리자가 삭제한 댓글입니다.' : text(post.body, 1600);
             if (!body) throw new Error('빈 반응이 반환되었습니다.');
-            if (!['us', 'europe', 'eastasia'].includes(post.region)) throw new Error('반응의 커뮤니티 권역이 올바르지 않습니다.');
+            const region = post.region ?? plan.voices?.[index]?.region;
+            if (!['us', 'europe', 'eastasia'].includes(region)) throw new Error('반응의 커뮤니티 권역이 올바르지 않습니다.');
             if (post.replyTo != null && (!Number.isInteger(post.replyTo) || post.replyTo < 0 || post.replyTo >= index)) throw new Error('답글이 이전 댓글을 올바르게 가리키지 않습니다.');
-            return { author: text(post.author, 80) || '익명', avatar: plan.voices?.[index]?.avatar || '◈', group: post.group, region: post.region, removed, replyTo: post.replyTo ?? null, culture: ['korean', 'international'].includes(post.culture) ? post.culture : culture, body, title: text(post.title, 160) };
+            return { author: text(post.author, 80) || '익명', avatar: plan.voices?.[index]?.avatar || '◈', group: post.group, region, removed, replyTo: post.replyTo ?? null, culture: ['korean', 'international'].includes(post.culture) ? post.culture : plan.voices?.[index]?.culture || culture, body, title: text(post.title, 160) };
         });
-        if (Object.values(remaining).some(n => n !== 0)) throw new Error('요청한 집단별 반응 수와 결과가 다릅니다. 다시 생성해 주세요.');
-        return { id: plan.id, name: plan.name, style: plan.style, culture, posts };
+        if (remaining ? Object.values(remaining).some(n => n !== 0) : posts.length !== plan.count) throw new Error('요청한 집단별 반응 수와 결과가 다릅니다. 다시 생성해 주세요.');
+        return { id: plan.id, name: plan.name, style: plan.style, language: plan.outputLanguage || 'en', culture, posts };
     });
 }

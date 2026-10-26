@@ -4,18 +4,22 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { loadOriginalCatalog } from '../server-plugin/original-catalog.mjs';
 import { createService } from '../server-plugin/service.mjs';
 import { rootFor, read, write, profileFile, chatFile, jobFile } from '../server-plugin/storage.mjs';
 import { selectConnection, invokeChatRouter, makeGenerator } from '../server-plugin/model-bridge.mjs';
 import { capture } from '../src/engine.js';
-import { DEFAULT_PLATFORMS, LEGACY_DEFAULT_PLATFORMS } from '../src/core.js';
+import { importPlatforms } from '../src/core.js';
+const DEFAULT_PLATFORMS = importPlatforms(JSON.parse(await fs.readFile(new URL('../prompts/community-reactions.json', import.meta.url), 'utf8')));
+const LEGACY_DEFAULT_PLATFORMS = ['x', 'instagram', 'reddit', 'community'].map(id => ({ id, name: id, style: 'board', prompt: 'Old example.' }));
 
-const person = { name: 'Hunter', occupation: '선수', recognition: '공인', reputation: '차분함', acquaintanceView: '친근함', publicInfo: '선수 경력' };
-const modelProfile = JSON.stringify({ character: person, persona: { ...person, name: 'Jamie', occupation: '회사원' } });
+const person = { name: 'Hunter', occupation: 'Professional player', recognition: 'Public figure', reputation: 'Calm', acquaintanceView: 'Friendly', publicInfo: 'Playing career' };
+const modelProfile = JSON.stringify({ character: person, persona: { ...person, name: 'Jamie', occupation: 'Office worker' } });
 function modelOutput(options) {
     if (options.systemPrompt.startsWith('Summarize')) return modelProfile;
+    if (options.systemPrompt.startsWith('Translate these')) return JSON.stringify({ posts: JSON.parse(options.prompt).posts.map(() => ({ title: '', body: '그 마이크는 누가 계속 주는 거야. 반대는 안 해.' })) });
     const plans = JSON.parse(options.prompt).platforms;
-    return JSON.stringify({ feeds: plans.map(plan => ({ platform: plan.id, posts: Object.entries(plan.slots).flatMap(([group, n]) => Array.from({ length: n }, (_, i) => ({ author: `viewer${i}`, group, region: 'us', culture: 'international', body: '공개 인터뷰에 대한 반응' }))) })) });
+    return JSON.stringify({ feeds: plans.map(plan => ({ platform: plan.id, posts: Object.entries(plan.slots || { public: plan.count }).flatMap(([group, n]) => Array.from({ length: n }, (_, i) => ({ author: `viewer${i}`, group, region: 'us', culture: 'international', body: 'Who keeps handing this man a microphone. I am not complaining.' }))) })) });
 }
 const jevFetch = async (_url, options) => {
     const questions = JSON.parse(options.body).questions;
@@ -92,26 +96,25 @@ test('branches, manual checks and edited prompts persist; old automatic generati
     assert.equal(restored.settings.platforms[0].prompt, 'Edited platform voice.');
     assert.equal(restored.settings.platforms[0].sharedPrompt, 'Edited shared instruction.');
 });
-test('old four-platform storage upgrades once to nine and adopts a private bundle without losing edits', async t => {
-    const f = await fixture(t);
+test('original lorebook restores once verbatim even over placeholder edits; later edits persist', async t => {
+    const f = await fixture(t), original = await loadOriginalCatalog();
     const stored = await read(f.root, 'settings.json');
-    const legacy = { ...f.config, platforms: structuredClone(LEGACY_DEFAULT_PLATFORMS), selectedPlatforms: ['x', 'reddit'], selectionMode: 'manual' };
-    delete legacy.catalogVersion;
-    legacy.platforms.find(p => p.id === 'reddit').prompt = 'My edited Reddit prompt.';
+    const legacy = { ...f.config, platforms: structuredClone(LEGACY_DEFAULT_PLATFORMS), selectedPlatforms: ['x', 'reddit'], selectionMode: 'manual', promptSource: 'old-examples.json' };
+    delete legacy.originalSourceRevision;
+    legacy.platforms.find(p => p.id === 'reddit').prompt = 'Old placeholder edit.';
     await write(f.root, 'settings.json', { ...stored, settings: legacy });
-    const first = await f.service.bootstrap(f.request, { platforms: DEFAULT_PLATFORMS });
+    const first = await f.service.bootstrap(f.request);
     assert.equal(first.settings.platforms.length, 9);
-    assert.equal(first.settings.platforms.find(p => p.id === 'reddit').prompt, 'My edited Reddit prompt.');
+    assert.deepEqual(first.settings.platforms, original.platforms);
+    assert.equal(first.settings.originalSourceRevision, original.revision);
     assert.deepEqual(first.settings.selectedPlatforms, ['reddit', 'twitter']);
     assert.equal(first.keyStatuses.typesafe, true);
-    assert.equal((await read(f.root, 'migration/catalog-v1-backup.json')).platforms.length, 4);
-    assert.equal((await f.service.bootstrap(f.request, { platforms: DEFAULT_PLATFORMS })).revision, first.revision);
-    const bundle = { platforms: DEFAULT_PLATFORMS.map(p => ({ ...p, prompt: 'Private source fixture: ' + p.id })), promptSource: 'local-book.json' };
-    const adopted = await f.service.bootstrap(f.request, bundle);
-    assert.equal(adopted.settings.promptSource, 'local-book.json');
-    assert.equal(adopted.settings.platforms.find(p => p.id === 'twitter').prompt, 'Private source fixture: twitter');
-    assert.equal(adopted.settings.platforms.find(p => p.id === 'reddit').prompt, 'My edited Reddit prompt.');
-    assert.equal((await f.service.bootstrap(f.request, bundle)).revision, adopted.revision);
+    assert.equal((await read(f.root, 'migration/original-prompts-backup.json')).platforms.find(p => p.id === 'reddit').prompt, 'Old placeholder edit.');
+    const edited = structuredClone(first.settings); edited.platforms[0].prompt = 'My later edit.';
+    const saved = await f.service.updateSettings(f.request, { revision: first.revision, settings: edited });
+    const restored = await f.service.bootstrap(f.request);
+    assert.equal(restored.revision, saved.revision);
+    assert.equal(restored.settings.platforms[0].prompt, 'My later edit.');
 });
 test('an explicitly imported smaller lorebook is never replaced by default catalog repair', async t => {
     const f = await fixture(t);
@@ -135,9 +138,47 @@ test('server completes a detached job without polling and results survive a new 
     assert.equal(calls.length, 2); assert.ok(calls.every(c => c.responseLength >= 8000));
     const returned = createService();
     const data = await returned.scopeData(f.request, f.snapshot.scope);
-    assert.equal(data.results[f.snapshot.key].result.feeds[0].posts.length, 8);
+    assert.equal(data.results[f.snapshot.key].result.feeds[0].posts.length, 6);
     assert.ok((await read(f.root, profileFile(f.snapshot.scope))).profiles[f.snapshot.profileKey]);
     assert.ok((await read(f.root, chatFile(f.snapshot.scope))).results[f.snapshot.key]);
+});
+test('manual jobs require no JEV key, make zero JEV calls, and store English profiles', async t => {
+    let jevCalls = 0;
+    const f = await fixture(t, { fetchImpl: async () => { jevCalls++; assert.fail('manual JEV call'); } });
+    await f.service.saveKey(f.request, { provider: 'typesafe', key: '' });
+    const config = { ...f.config, selectionMode: 'manual', selectedPlatforms: [f.config.platforms[0].id], underground: true, commentVolume: 'low', outputLanguage: 'en' };
+    const saved = await f.service.updateSettings(f.request, { revision: f.revision, settings: config });
+    const snap = capture(f.ctx, config, 0);
+    const { job } = await f.service.submit(f.request, { revision: saved.revision, scope: snap.scope, snapshot: snap });
+    assert.equal((await finish(f.service, f.request, job.id)).status, 'completed');
+    assert.equal(jevCalls, 0);
+    const data = await f.service.scopeData(f.request, snap.scope);
+    assert.equal(data.results[snap.key].result.feeds[0].posts.length, 3);
+    assert.equal(data.profiles[snap.profileKey].language, 'en');
+    assert.equal(data.profiles[snap.profileKey].profile.character.occupation, 'Professional player');
+});
+test('selected-feed translation sends no sheets or lorebook; duplicate and cached requests cost no extra call', async t => {
+    const calls = [];
+    let release;
+    const gate = new Promise(resolve => release = resolve);
+    const f = await fixture(t, { generateFactory: async () => async options => { calls.push(options); if (options.systemPrompt.startsWith('Translate these')) await gate; return modelOutput(options); } });
+    const generated = await f.service.submit(f.request, { revision: f.revision, scope: f.snapshot.scope, snapshot: f.snapshot });
+    assert.equal((await finish(f.service, f.request, generated.job.id)).status, 'completed');
+    const before = structuredClone((await f.service.scopeData(f.request, f.snapshot.scope)).results[f.snapshot.key].result.feeds[0]);
+    const request = { scope: f.snapshot.scope, key: f.snapshot.key, platform: before.id, revision: f.revision };
+    const first = await f.service.translate(f.request, request), duplicate = await f.service.translate(f.request, request);
+    assert.equal(first.job.id, duplicate.job.id);
+    await assert.rejects(f.service.clear(f.request, { scope: f.snapshot.scope }), /진행 중/);
+    release(); assert.equal((await finish(f.service, f.request, first.job.id)).status, 'completed');
+    const translations = calls.filter(c => c.systemPrompt.startsWith('Translate these'));
+    assert.equal(translations.length, 1);
+    assert.deepEqual(Object.keys(JSON.parse(translations[0].prompt)).sort(), ['platform', 'posts', 'style']);
+    assert.equal(JSON.parse(translations[0].prompt).posts.length, before.posts.length);
+    const after = (await f.service.scopeData(f.request, f.snapshot.scope)).results[f.snapshot.key].result.feeds[0];
+    assert.deepEqual(after.posts, before.posts);
+    assert.equal(after.translation.posts.length, before.posts.length);
+    assert.equal((await f.service.translate(f.request, request)).cached, true);
+    assert.equal(calls.filter(c => c.systemPrompt.startsWith('Translate these')).length, 1);
 });
 test('duplicate submissions share one background job and another account cannot read it', async t => {
     let release; const hold = new Promise(resolve => release = resolve);
@@ -215,4 +256,13 @@ test('native Text Completion profile uses its saved endpoint and instruct templa
     assert.equal(await generate({ systemPrompt: 'rules', prompt: 'source', responseLength: 8192 }), '{"ok":true}');
     assert.equal(payload.api_server, 'http://127.0.0.1:5001'); assert.equal(payload.max_new_tokens, 8192);
     assert.equal(payload.prompt, '<system>rules</system><user>source</user><assistant>');
+});
+test('Vertex profile retains server authentication mode, project and configured reasoning effort', async t => {
+    const f = await fixture(t);
+    await fs.writeFile(path.join(f.request.user.directories.root, 'settings.json'), JSON.stringify({ main_api: 'openai', oai_settings: { vertexai_auth_mode: 'full', vertexai_express_project_id: 'my-project', vertexai_region: 'global', reasoning_effort: 'low' }, extension_settings: { connectionManager: { profiles: [{ id: 'vertex', api: 'vertexai', model: 'gemini-test', 'secret-id': 'service-account' }] } } }));
+    const connection = await selectConnection(f.request.user, 'vertex', ['vertexai']);
+    assert.equal(connection.vertexai_auth_mode, 'full'); assert.equal(connection.vertexai_express_project_id, 'my-project');
+    assert.equal(connection.vertexai_region, 'global'); assert.equal(connection.reasoning_effort, 'low');
+    const generate = makeGenerator({ handle(_req, res) { res.json({ candidates: [{ finishReason: 'MAX_TOKENS' }] }); } }, f.request.user, connection, null);
+    await assert.rejects(generate({ systemPrompt: '', prompt: '', responseLength: 8192 }), /잘렸/);
 });

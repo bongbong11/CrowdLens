@@ -38,6 +38,10 @@ export async function selectConnection(user, profileId, sources, textTypes = [])
         secret_id: profile?.['secret-id'],
         custom_url: profile?.['api-url'] || current.custom_url,
         vertexai_region: profile?.['api-url'] || current.vertexai_region,
+        vertexai_auth_mode: current.vertexai_auth_mode,
+        vertexai_express_project_id: current.vertexai_express_project_id,
+        reasoning_effort: current.reasoning_effort,
+        include_reasoning: false,
         zai_endpoint: profile?.['api-url'] || current.zai_endpoint,
         siliconflow_endpoint: profile?.['api-url'] || current.siliconflow_endpoint,
         minimax_endpoint: profile?.['api-url'] || current.minimax_endpoint,
@@ -93,8 +97,8 @@ export async function invokeChatRouter(router, user, payload, signal) {
     });
 }
 export function textFrom(data) {
-    const finish = data?.choices?.[0]?.finish_reason ?? data?.finish_reason;
-    if (['length', 'max_tokens'].includes(finish)) throw new Error('모델 출력이 잘렸습니다. 최대 출력 토큰을 늘려 주세요.');
+    const finish = String(data?.choices?.[0]?.finish_reason ?? data?.finish_reason ?? data?.candidates?.[0]?.finishReason ?? '').toLowerCase();
+    if (['length', 'max_tokens'].includes(finish)) throw new Error('모델 출력이 한도에 닿아 잘렸습니다. 댓글 양·커뮤니티 수를 줄이거나 최대 출력 토큰을 늘려 주세요. 자동 재요청은 하지 않습니다.');
     const text = data?.choices?.[0]?.message?.content ?? data?.choices?.[0]?.text ?? data?.results?.[0]?.text ?? data?.response ?? data?.content;
     if (typeof text !== 'string' || !text.trim()) throw new Error('SillyTavern 서버가 유효한 모델 텍스트를 반환하지 않았습니다.');
     return text;
